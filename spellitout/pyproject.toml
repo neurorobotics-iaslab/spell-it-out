@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spellitout"
+version = "0.1.0"
+description = "Utilities for loading and working with the Spell-IT-OUT EEG dataset."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=1.5",
+  "mne>=1.6",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["spellitout*"]
+
+[tool.setuptools.package-data]
+"spellitout" = ["resources/*"]
+"spellitout.resources" = ["*.tsv", "*.yaml"]
