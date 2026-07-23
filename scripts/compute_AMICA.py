@@ -299,7 +299,7 @@ def process_subject(subject: str, runs: dict, output_root: Path, args: argparse.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--condition", choices=("overt", "silent"), required=True)
-    parser.add_argument("--data-path", type=Path, default=Path("data/spellitout"))
+    parser.add_argument("--data-path", type=Path, default=None)
     parser.add_argument("--derivatives-path", type=Path, default=Path("derivatives/preprocessing"))
     parser.add_argument("--subjects", type=int, nargs="+", default=None)
     parser.add_argument("--runs", type=int, nargs="+", default=(1, 2, 3))
@@ -311,11 +311,16 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     arguments = parse_args()
+    if arguments.data_path is not None:
+        data_path = Path(arguments.data_path)
+    else:
+        data_path = None
+
     dataset = SpellItOut(
         arguments.condition,
         subjects=arguments.subjects,
         runs=list(arguments.runs),
-        data_path=arguments.data_path,
+        data_path=data_path,
     )
     output = arguments.derivatives_path / f"task-{arguments.condition}"
     for subject_id, subject_runs in dataset.get_data().items():
