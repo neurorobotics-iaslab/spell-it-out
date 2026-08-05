@@ -130,21 +130,6 @@ def _merge_annotation_windows(
         (end - start for start, end in kept),
         description,
     )
-
-
-def _blink_channels(raw: mne.io.BaseRaw, configured: tuple[str, ...]) -> list[str]:
-    if configured:
-        return [channel for channel in configured if channel in raw.ch_names]
-    eog_channels = [
-        channel
-        for channel, channel_type in zip(raw.ch_names, raw.get_channel_types())
-        if channel_type == "eog"
-    ]
-    if eog_channels:
-        return eog_channels
-    return [channel for channel in ("FP1", "FPZ", "FP2") if channel in raw.ch_names]
-
-
 def detect_qc_candidates(
     raw: mne.io.BaseRaw,
     config: MinimalPreprocessingConfig,
@@ -159,7 +144,7 @@ def detect_qc_candidates(
     candidates = _empty_annotations(raw)
 
     if config.detect_blinks:
-        channels = _blink_channels(raw, config.blink_channels)
+        channels = config.blink_channels or ("EOG", "FP1", "FPZ", "FP2")
         if channels:
             events = mne.preprocessing.find_eog_events(
                 raw,
