@@ -144,7 +144,7 @@ def detect_qc_candidates(
     candidates = _empty_annotations(raw)
 
     if config.detect_blinks:
-        channels = config.blink_channels or ("EOG", "FP1", "FPZ", "FP2")
+        channels = list(config.blink_channels) or ["EOG", "FP1", "FPZ", "FP2"]
         if channels:
             events = mne.preprocessing.find_eog_events(
                 raw,
