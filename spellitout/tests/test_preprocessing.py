@@ -5,6 +5,8 @@ import mne
 import numpy as np
 import pandas as pd
 
+from spellitout.ica import component_energy_fractions, condition_channel_plan
+
 from spellitout.preprocessing import (
     MinimalPreprocessingConfig,
     PrepQCConfig,
@@ -170,3 +172,32 @@ def test_muscle_windows_merge_before_short_spans_are_discarded():
     assert merged.description[0] == "MUSCLE_CANDIDATE"
     assert np.isclose(merged.onset[0], 1.0)
     assert np.isclose(merged.duration[0], 0.21)
+
+
+def test_condition_channel_plan_exclusion_overrides_interpolation():
+    columns = {
+        "channel": ["C3", "C4", "EOG1"],
+        "channel_type": ["EEG", "EEG", "EOG"],
+        "automatic_status": ["not_flagged"] * 3,
+        "automatic_methods": [""] * 3,
+        "final_decision": ["interpolate", "retain", "unreviewed"],
+    }
+    run_1 = pd.DataFrame(columns)
+    run_2 = pd.DataFrame({**columns, "final_decision": ["exclude_from_ica", "interpolate", "unreviewed"]})
+
+    interpolated, excluded, plan = condition_channel_plan({"run-01": run_1, "run-02": run_2})
+
+    assert interpolated == ["C4"]
+    assert excluded == ["C3"]
+    assert plan.set_index("channel").loc["C3", "condition_decision"] == "exclude_from_ica"
+
+
+def test_component_energy_fractions_are_nonnegative_and_sum_to_one():
+    mixing = np.array([[1.0, 0.2], [0.3, 2.0]])
+    sources = np.array([
+        np.sin(np.linspace(0, 20, 1000)),
+        0.5 * np.cos(np.linspace(0, 20, 1000)),
+    ])
+    fractions = component_energy_fractions(mixing, sources)
+    assert np.all(fractions >= 0)
+    assert np.isclose(fractions.sum(), 1.0)

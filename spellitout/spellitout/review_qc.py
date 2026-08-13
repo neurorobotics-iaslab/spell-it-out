@@ -174,6 +174,7 @@ class QCReviewApplication:
         self.view_lowpass = tk.StringVar(value="")
         self.view_notch = tk.StringVar(value="50")
         self.view_average_reference = tk.BooleanVar(value=False)
+        self.trace_amplitude_uv = tk.StringVar(value="100")
         self.status = tk.StringVar(value="")
         self.channel_details = tk.StringVar(value="Select a channel to see its PREP evidence.")
         self.current_record: ReviewRecord | None = None
@@ -184,6 +185,7 @@ class QCReviewApplication:
         self.annotation_sort_ascending = True
         self._display_cache_key = None
         self._display_cache = None
+        self.visible_channel_indices: set[int] = set()
 
         root.title("Spell-IT-OUT QC review")
         root.geometry("1500x900")
@@ -204,9 +206,22 @@ class QCReviewApplication:
         ttk.Entry(controls, textvariable=self.start_seconds, width=8).grid(row=0, column=5, padx=4)
         ttk.Label(controls, text="Window (s)").grid(row=0, column=6, sticky="w")
         ttk.Spinbox(controls, from_=2, to=120, increment=1, textvariable=self.window_seconds, width=6, command=self.draw_trace).grid(row=0, column=7, padx=4)
-        ttk.Button(controls, text="◀", command=lambda: self.shift_window(-1)).grid(row=0, column=8, padx=(8, 2))
-        ttk.Button(controls, text="▶", command=lambda: self.shift_window(1)).grid(row=0, column=9, sticky="w")
-        ttk.Button(controls, text="Save now", command=self.save_current).grid(row=0, column=10, padx=(12, 0))
+        ttk.Label(controls, text="Trace limit ±µV").grid(row=0, column=8, padx=(12, 0), sticky="w")
+        amplitude_spinbox = ttk.Spinbox(
+            controls,
+            from_=10,
+            to=2000,
+            increment=10,
+            textvariable=self.trace_amplitude_uv,
+            width=6,
+            command=self.draw_trace,
+        )
+        amplitude_spinbox.grid(row=0, column=9, padx=4)
+        amplitude_spinbox.bind("<Return>", lambda _event: self.draw_trace())
+        amplitude_spinbox.bind("<FocusOut>", lambda _event: self.draw_trace())
+        ttk.Button(controls, text="◀", command=lambda: self.shift_window(-1)).grid(row=0, column=10, padx=(8, 2))
+        ttk.Button(controls, text="▶", command=lambda: self.shift_window(1)).grid(row=0, column=11, sticky="w")
+        ttk.Button(controls, text="Save now", command=self.save_current).grid(row=0, column=12, padx=(12, 0))
         view_controls = ttk.LabelFrame(controls, text="Display preprocessing only — never saved or used by PREP", padding=5)
         view_controls.grid(row=1, column=0, columnspan=11, pady=(8, 0), sticky="ew")
         ttk.Label(view_controls, text="High-pass (Hz)").grid(row=0, column=0, sticky="w")
@@ -290,7 +305,7 @@ class QCReviewApplication:
         ttk = self.ttk
         self.channel_tab.columnconfigure(0, weight=1)
         self.channel_tab.rowconfigure(0, weight=1)
-        columns = ("channel", "automatic_status", "automatic_methods", "final_decision")
+        columns = ("show", "channel", "automatic_status", "automatic_methods", "final_decision")
         self.channel_tree = ttk.Treeview(
             self.channel_tab,
             columns=columns,
@@ -298,18 +313,19 @@ class QCReviewApplication:
             height=19,
             selectmode="extended",
         )
-        for column, width in zip(columns, (80, 105, 155, 130)):
+        for column, width in zip(columns, (48, 80, 105, 155, 130)):
             self.channel_tree.heading(column, text=column.replace("_", " "))
-            self.channel_tree.column(column, width=width, anchor="w")
+            self.channel_tree.column(column, width=width, anchor="center" if column == "show" else "w")
         self.channel_tree.grid(row=0, column=0, sticky="nsew")
         self.channel_tree.bind("<<TreeviewSelect>>", self.select_channel)
+        self.channel_tree.bind("<Button-1>", self.toggle_channel_visibility)
         decisions = ttk.Frame(self.channel_tab)
         decisions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         for column, (label, decision) in enumerate((("Retain", "retain"), ("Interpolate", "interpolate"), ("Exclude ICA", "exclude_from_ica"), ("Clear decision", "unreviewed"))):
             ttk.Button(decisions, text=label, command=lambda value=decision: self.set_channel_decision(value)).grid(row=0, column=column, padx=2, sticky="ew")
             decisions.columnconfigure(column, weight=1)
-        ttk.Button(decisions, text="Select all EEG", command=self.select_all_eeg_channels).grid(row=1, column=0, columnspan=2, pady=(7, 0), sticky="ew")
-        ttk.Button(decisions, text="Show selected", command=self.draw_trace).grid(row=1, column=2, columnspan=2, padx=(4, 0), pady=(7, 0), sticky="ew")
+        ttk.Button(decisions, text="Show all EEG", command=self.show_all_eeg_channels).grid(row=1, column=0, columnspan=2, pady=(7, 0), sticky="ew")
+        ttk.Button(decisions, text="Hide all", command=self.hide_all_channels).grid(row=1, column=2, columnspan=2, padx=(4, 0), pady=(7, 0), sticky="ew")
         ttk.Label(decisions, text="Notes").grid(row=2, column=0, pady=(7, 0), sticky="w")
         ttk.Entry(decisions, textvariable=self.review_notes, width=45).grid(row=2, column=1, columnspan=3, pady=(7, 0), sticky="ew")
         ttk.Label(self.channel_tab, textvariable=self.channel_details, justify="left", wraplength=510).grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -327,6 +343,7 @@ class QCReviewApplication:
         self.start_seconds.set(0.0)
         self._display_cache_key = None
         self._display_cache = None
+        self.visible_channel_indices = set(self.channels.index[:1])
         self.refresh_tables()
         self.status.set(f"Loaded {record.label}. Changes autosave after each decision.")
 
@@ -355,7 +372,8 @@ class QCReviewApplication:
         for index, row in sorted_annotations.iterrows():
             self.annotation_tree.insert("", "end", iid=f"a{index}", values=(f"{row.onset:.3f}", f"{row.duration:.3f}", row.trial_type, row.review_status, row.reviewed_description))
         for index, row in self.channels.iterrows():
-            self.channel_tree.insert("", "end", iid=f"c{index}", values=(row.channel, row.automatic_status, row.automatic_methods, row.final_decision))
+            visible = "☑" if index in self.visible_channel_indices else "☐"
+            self.channel_tree.insert("", "end", iid=f"c{index}", values=(visible, row.channel, row.automatic_status, row.automatic_methods, row.final_decision))
         valid_channel_selection = [
             f"c{index}" for index in channel_selection if index in self.channels.index
         ]
@@ -390,6 +408,23 @@ class QCReviewApplication:
     def _selected_indices(self, tree, prefix: str) -> list[int]:
         return [int(item[len(prefix):]) for item in tree.selection()]
 
+    def toggle_channel_visibility(self, event):
+        """Toggle only the checkbox column; row selection remains for decisions."""
+        if self.channel_tree.identify_region(event.x, event.y) != "cell":
+            return None
+        if self.channel_tree.identify_column(event.x) != "#1":
+            return None
+        item = self.channel_tree.identify_row(event.y)
+        if not item:
+            return "break"
+        index = int(item[1:])
+        if index in self.visible_channel_indices:
+            self.visible_channel_indices.remove(index)
+        else:
+            self.visible_channel_indices.add(index)
+        self.refresh_tables()
+        return "break"
+
     def select_annotation(self, _event=None) -> None:
         index = self._selected_index(self.annotation_tree, "a")
         if index is None:
@@ -418,17 +453,40 @@ class QCReviewApplication:
         )
         self.draw_trace()
 
-    def select_all_eeg_channels(self) -> None:
+    def show_all_eeg_channels(self) -> None:
         eeg_indices = self.channels.index[
             self.channels["channel_type"].str.upper() == "EEG"
         ].tolist()
-        self.channel_tree.selection_set([f"c{index}" for index in eeg_indices])
-        self.select_channel()
+        self.visible_channel_indices.update(eeg_indices)
+        self.refresh_tables()
+
+    def hide_all_channels(self) -> None:
+        self.visible_channel_indices.clear()
+        self.refresh_tables()
+
+    def _trace_limit_uv(self) -> float:
+        try:
+            limit = float(self.trace_amplitude_uv.get())
+        except ValueError as error:
+            raise ValueError("Trace limit must be a positive number in µV.") from error
+        if not np.isfinite(limit) or limit <= 0:
+            raise ValueError("Trace limit must be a positive number in µV.")
+        return limit
 
     def draw_trace(self, *_args) -> None:
         if self.raw is None or self.channels.empty:
             return
-        channel_indices = self._selected_indices(self.channel_tree, "c") or [0]
+        channel_indices = sorted(self.visible_channel_indices)
+        if not channel_indices:
+            self.figure.clear()
+            self.canvas.draw_idle()
+            self.status.set("Enable one or more channel checkboxes to display traces.")
+            return
+        try:
+            trace_limit = self._trace_limit_uv()
+        except ValueError as error:
+            self.status.set(str(error))
+            return
         channels = self.channels.loc[channel_indices, "channel"].tolist()
         duration = float(self.raw.times[-1])
         window = max(0.1, float(self.window_seconds.get()))
@@ -460,6 +518,7 @@ class QCReviewApplication:
                 else:
                     axis.axvspan(onset, end, color=colours.get(row.review_status, "#f0ad4e"), alpha=0.22)
             axis.set_ylabel(f"{channel}\nµV", rotation=0, ha="right", va="center")
+            axis.set_ylim(-trace_limit, trace_limit)
             axis.grid(alpha=0.25)
         if selected_annotation_indices:
             selected = self.annotations.loc[next(iter(selected_annotation_indices))]

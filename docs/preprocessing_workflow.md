@@ -14,11 +14,12 @@ decision.
 3. `03_review_qc` is the human review gate. It updates only
    `desc-qc_annotations.tsv` and `desc-channelqc.tsv`: global artifact candidates
    can be approved or dismissed, and every channel receives a per-run decision.
-4. `04_ica_input` calculates the approved condition-level bad-channel union,
-   interpolates that same set in every run, applies the final common average
-   reference, and concatenates runs within a subject and task.
-5. `05_ica` fits AMICA to `ica-input`, records component evidence and manual
-   decisions, then optionally writes an ICA-cleaned derivative.
+4. `04_amica` calculates the approved condition-level bad-channel union,
+   interpolates that same set in every run, applies line-noise removal and the
+   final common average reference, saves the concatenated ICA input, and fits
+   AMICA in one invocation.
+5. `05_review_ica` reviews AMICA components and records manual decisions;
+   applying selected components remains a later explicit operation.
 
 The source raw dataset is immutable. Each derivative sidecar records source
 identity, configuration, and decisions required to reproduce the next stage.
@@ -62,3 +63,23 @@ not modify the minimally processed raw FIF.
 Its display-only controls can apply high-pass, low-pass, notch, and average
 reference operations to a temporary in-memory copy for visual inspection. They
 never alter the saved FIF, review TSVs, PREP evidence, or later ICA input.
+
+## Running stage 4
+
+```bash
+python scripts/04_amica.py --condition silent --subjects 1 --device cuda
+```
+
+All selected runs must have completed annotation and EEG-channel decisions.
+The default line-noise method is a 50 Hz notch; use `--line-noise-method prep`
+to use only PREP's line-noise procedure instead. The script writes the
+condition-level ICA-input checkpoint before starting the AMICA fit.
+
+## Running stage 5
+
+```bash
+python scripts/05_review_ica.py --condition silent --subject 1 --reviewer Tommaso
+```
+
+This GUI records component keep/reject decisions in the AMICA component TSV;
+it does not apply them to a cleaned EEG derivative.
