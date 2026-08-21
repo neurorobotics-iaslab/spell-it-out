@@ -42,6 +42,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--h-freq", type=float, default=100.0)
     parser.add_argument("--no-blink-annotations", action="store_true")
     parser.add_argument("--blink-channels", nargs="*", default=())
+    parser.add_argument(
+        "--blink-threshold-uv",
+        "--blink-threshold",
+        dest="blink_threshold_uv",
+        type=float,
+        default=None,
+        help="Optional peak threshold for MNE blink detection, in microvolts. Omit to use MNE's automatic threshold.",
+    )
     parser.add_argument("--no-muscle-candidates", action="store_true")
     parser.add_argument("--muscle-threshold", type=float, default=4.0)
     parser.add_argument("--muscle-merge-gap", type=float, default=0.10)
@@ -66,6 +74,11 @@ def main(args: argparse.Namespace) -> None:
         h_freq_hz=args.h_freq,
         detect_blinks=not args.no_blink_annotations,
         blink_channels=tuple(args.blink_channels),
+        blink_threshold_volts=(
+            None
+            if args.blink_threshold_uv is None
+            else args.blink_threshold_uv * 1e-6
+        ),
         detect_muscle_candidates=not args.no_muscle_candidates,
         muscle_zscore_threshold=args.muscle_threshold,
         muscle_merge_gap_seconds=args.muscle_merge_gap,

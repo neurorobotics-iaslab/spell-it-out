@@ -1,11 +1,14 @@
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import mne
 import numpy as np
 import pandas as pd
 
 from spellitout.ica import component_energy_fractions, condition_channel_plan
+from spellitout.erd_ers import epoch_badness
+from spellitout.blink_rate import _reviewed_blinks, enforce_minimum_blink_separation
 
 from spellitout.preprocessing import (
     MinimalPreprocessingConfig,
@@ -18,11 +21,92 @@ from spellitout.preprocessing import (
     write_minimal_run,
 )
 from spellitout.review_qc import (
+    QCReviewApplication,
     ReviewRecord,
     approved_bad_annotations,
     read_review_tables,
     write_review_tables,
 )
+
+
+def test_qc_shortcut_is_not_blocked_by_windows_keyboard_state():
+    application = QCReviewApplication.__new__(QCReviewApplication)
+    calls = []
+
+    result = application.run_shortcut(
+        SimpleNamespace(
+            state=0x8,
+            widget=SimpleNamespace(winfo_class=lambda: "Treeview"),
+        ),
+        lambda: calls.append("invoked"),
+    )
+
+    assert calls == ["invoked"]
+    assert result == "break"
+
+
+def test_qc_shortcut_is_disabled_while_editing_text():
+    application = QCReviewApplication.__new__(QCReviewApplication)
+    calls = []
+
+    result = application.run_shortcut(
+        SimpleNamespace(
+            state=0,
+            widget=SimpleNamespace(winfo_class=lambda: "TEntry"),
+        ),
+        lambda: calls.append("invoked"),
+    )
+
+    assert calls == []
+    assert result is None
+
+
+def test_erd_epoch_badness_unions_overlapping_bad_spans():
+    raw = mne.io.RawArray(
+        np.zeros((1, 1000)),
+        mne.create_info(["C3"], sfreq=100, ch_types="eeg"),
+        verbose="error",
+    )
+    raw.set_annotations(
+        mne.Annotations(
+            onset=[1.0, 1.05],
+            duration=[0.10, 0.15],
+            description=["BAD_MUSCLE", "BAD_AMPLITUDE"],
+        )
+    )
+    events = np.array([[150, 0, 1]])
+
+    report = epoch_badness(raw, events, tmin=-1.0, tmax=1.0, max_bad_duration=0.21)
+
+    assert np.isclose(report.loc[0, "bad_overlap_seconds"], 0.20)
+    assert bool(report.loc[0, "kept"])
+
+
+def test_unreviewed_blinks_are_counted_and_reported():
+    annotations = pd.DataFrame(
+        {
+            "onset": [1.0, 3.0, 5.0],
+            "duration": [0.75, 0.75, 0.75],
+            "trial_type": ["BLINK", "BLINK", "BLINK"],
+            "reviewed_description": ["", "BLINK", "BLINK"],
+            "review_status": ["unreviewed", "keep", "dismissed"],
+        }
+    )
+    centres, n_unreviewed, n_dismissed = _reviewed_blinks(annotations)
+
+    assert len(centres) == 2
+    assert n_unreviewed == 1
+    assert n_dismissed == 1
+
+
+def test_blink_minimum_separation_suppresses_only_close_centres():
+    centres, suppressed = enforce_minimum_blink_separation(
+        np.array([1.00, 1.10, 1.15, 1.31, 2.00]),
+        0.150,
+    )
+
+    assert np.allclose(centres, [1.00, 1.15, 1.31, 2.00])
+    assert suppressed == 1
 
 
 def test_minimal_preprocessing_keeps_candidates_and_writes_checkpoint(tmp_path):

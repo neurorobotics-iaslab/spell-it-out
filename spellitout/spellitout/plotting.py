@@ -3,7 +3,7 @@ import mne
 import numpy as np
 
 
-def plot_erd_grid(tfr, bands, time_windows, vlim=(-0.5, 0.5), cmap='RdBu_r',title=''):
+def plot_erd_grid(tfr, bands, time_windows, vlim=(-0.5, 0.5), cmap='RdBu_r', title='', cbar_label='ERD / ERS'):
     """
     Genera una griglia di topoplot con una SINGOLA colorbar orizzontale in basso.
     """
@@ -63,7 +63,7 @@ def plot_erd_grid(tfr, bands, time_windows, vlim=(-0.5, 0.5), cmap='RdBu_r',titl
     # fraction e pad controllano quanto spazio occupa rispetto ai plot
     cbar = fig.colorbar(im, ax=axes.ravel().tolist(), orientation='horizontal', 
                         shrink=0.6, pad=0.1, aspect=30)
-    cbar.set_label('ERD / ERS', fontsize=11, labelpad=10)
+    cbar.set_label(cbar_label, fontsize=11, labelpad=10)
 
     fig.suptitle(title, fontsize=15, fontweight='bold', y=0.96)
     fig.subplots_adjust(top=0.90, bottom=0.25, left=0.12, right=0.95, hspace=0.1, wspace=0.1)

@@ -36,6 +36,7 @@ class MinimalPreprocessingConfig:
     h_freq_hz: float | None = 100.0
     detect_blinks: bool = True
     blink_channels: tuple[str, ...] = ()
+    blink_threshold_volts: float | None = None
     blink_pre_seconds: float = 0.25
     blink_post_seconds: float = 0.50
     detect_muscle_candidates: bool = True
@@ -147,11 +148,16 @@ def detect_qc_candidates(
         if config.blink_channels:
             channels = [channel for channel in config.blink_channels if channel in raw.ch_names]
         else:
-            channels = ("FP1", "FPZ", "FP2", 'EOG')
+            channels = [
+                channel
+                for channel in ("FP1", "FPZ", "FP2")
+                if channel in raw.ch_names
+            ]
         if channels:
             events = mne.preprocessing.find_eog_events(
                 raw,
                 ch_name=channels,
+                thresh=config.blink_threshold_volts,
                 reject_by_annotation=False,
                 verbose="error",
             )
@@ -165,7 +171,17 @@ def detect_qc_candidates(
                 len(onsets),
             )
             candidates += _annotations_from_windows(raw, onsets, durations, "BLINK")
-            logger.info("Detected %d blink candidates using %s", len(events), channels)
+            threshold_label = (
+                "MNE automatic threshold"
+                if config.blink_threshold_volts is None
+                else f"threshold {config.blink_threshold_volts * 1e6:.1f} µV"
+            )
+            logger.info(
+                "Detected %d blink candidates using %s (%s)",
+                len(events),
+                channels,
+                threshold_label,
+            )
         else:
             logger.warning("Blink detection skipped: no configured EOG or frontal channels found.")
 
@@ -235,15 +251,16 @@ def build_minimal_run(
         raw.drop_channels(config.drop_channels)
     raw.resample(config.resample_sfreq_hz, verbose="error")
     if config.l_freq_hz is not None or config.h_freq_hz is not None:
+        filter_picks = mne.pick_types(raw.info, eeg=True, eog=True, exclude=[])
         raw.filter(
             l_freq=config.l_freq_hz,
             h_freq=config.h_freq_hz,
-            picks="eeg",
+            picks=filter_picks,
             verbose="error",
         )
     raw.info["description"] = (
         "Minimally processed continuous derivative: channel exclusions, resampling, "
-        "and filtering only. No rereferencing, channel interpolation, or ICA removal."
+        "and EEG/EOG filtering only. No rereferencing, channel interpolation, or ICA removal."
     )
     return raw, candidates
 

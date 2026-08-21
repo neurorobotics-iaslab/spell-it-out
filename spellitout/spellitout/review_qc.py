@@ -176,6 +176,7 @@ class QCReviewApplication:
         self.view_average_reference = tk.BooleanVar(value=False)
         self.trace_amplitude_uv = tk.StringVar(value="100")
         self.status = tk.StringVar(value="")
+        self.annotation_selection_status = tk.StringVar(value="No artifacts selected.")
         self.channel_details = tk.StringVar(value="Select a channel to see its PREP evidence.")
         self.current_record: ReviewRecord | None = None
         self.raw = None
@@ -186,6 +187,7 @@ class QCReviewApplication:
         self._display_cache_key = None
         self._display_cache = None
         self.visible_channel_indices: set[int] = set()
+        self.selected_time_seconds: float | None = None
 
         root.title("Spell-IT-OUT QC review")
         root.geometry("1500x900")
@@ -246,6 +248,7 @@ class QCReviewApplication:
         self.axes = [self.figure.add_subplot(111)]
         self.canvas = FigureCanvasTkAgg(self.figure, master=trace_frame)
         self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+        self.canvas.mpl_connect("button_press_event", self.select_trace_time)
 
         right.columnconfigure(0, weight=1)
         right.rowconfigure(0, weight=1)
@@ -259,9 +262,61 @@ class QCReviewApplication:
         self._build_channel_tab()
         ttk.Label(root, textvariable=self.status, anchor="w", padding=(8, 0, 8, 8)).grid(row=2, column=0, sticky="ew")
         root.bind("<Control-s>", lambda event: self.save_current())
-        root.bind("<Left>", lambda event: self.shift_window(-1))
-        root.bind("<Right>", lambda event: self.shift_window(1))
+        self.bind_global_shortcuts(root)
         self.load_record(records[0])
+
+    def bind_global_shortcuts(self, root) -> None:
+        """Bind explicit keys before every widget's normal key handling."""
+        actions = {
+            "<KeyPress-u>": self.update_annotation_span,
+            "<KeyPress-U>": self.update_annotation_span,
+            "<KeyPress-k>": lambda: self.set_annotation_decision("keep"),
+            "<KeyPress-K>": lambda: self.set_annotation_decision("keep"),
+            "<KeyPress-a>": lambda: self.set_annotation_decision("approved_bad"),
+            "<KeyPress-A>": lambda: self.set_annotation_decision("approved_bad"),
+            "<KeyPress-d>": lambda: self.set_annotation_decision("dismissed"),
+            "<KeyPress-D>": lambda: self.set_annotation_decision("dismissed"),
+            "<KeyPress-plus>": self.add_bad_annotation,
+            "<KeyPress-KP_Add>": self.add_bad_annotation,
+            "<Left>": lambda: self.shift_window(-1),
+            "<Right>": lambda: self.shift_window(1),
+        }
+        shortcut_tag = "SpellItOutShortcuts"
+        for sequence, action in actions.items():
+            handler = lambda event, callback=action: self.run_shortcut(event, callback)
+            root.bind_all(sequence, handler, add="+")
+            root.bind_class(shortcut_tag, sequence, handler, add="+")
+
+        def add_shortcut_tag(widget) -> None:
+            tags = widget.bindtags()
+            if shortcut_tag not in tags:
+                # This custom tag is first, so its callback is reached even
+                # when the focused widget would otherwise consume the key.
+                widget.bindtags((shortcut_tag, *tags))
+            for child in widget.winfo_children():
+                add_shortcut_tag(child)
+
+        add_shortcut_tag(root)
+
+    def run_shortcut(self, event, action):
+        """Execute a shortcut unless the user is editing a text control."""
+        widget_class = event.widget.winfo_class()
+        if widget_class in {
+            "Entry",
+            "Spinbox",
+            "Text",
+            "TEntry",
+            "TSpinbox",
+            "TCombobox",
+        }:
+            return None
+        # On Windows, bit 0x8 is not reliable for detecting Alt and can be set
+        # by keyboard/Num-Lock state.  Treating it as a blocker made every
+        # shortcut silently return on affected keyboards.
+        if event.state & 0x4:
+            return None
+        action()
+        return "break"
 
     def _build_annotation_tab(self) -> None:
         ttk = self.ttk
@@ -293,13 +348,17 @@ class QCReviewApplication:
         ttk.Entry(edit, textvariable=self.annotation_duration, width=8).grid(row=0, column=3, padx=3)
         ttk.Label(edit, text="BAD label").grid(row=0, column=4)
         ttk.Combobox(edit, textvariable=self.annotation_bad_label, values=("BAD_MUSCLE", "BAD_AMPLITUDE", "BAD_MOVEMENT", "BAD_MANUAL"), state="readonly", width=15).grid(row=0, column=5, padx=3)
-        ttk.Button(edit, text="Update span", command=self.update_annotation_span).grid(row=1, column=0, columnspan=2, pady=5, sticky="ew")
-        ttk.Button(edit, text="Keep", command=lambda: self.set_annotation_decision("keep")).grid(row=1, column=2, pady=5, sticky="ew")
-        ttk.Button(edit, text="Approve BAD", command=lambda: self.set_annotation_decision("approved_bad")).grid(row=1, column=3, padx=3, pady=5, sticky="ew")
-        ttk.Button(edit, text="Dismiss", command=lambda: self.set_annotation_decision("dismissed")).grid(row=1, column=4, pady=5, sticky="ew")
-        ttk.Button(edit, text="Add BAD span", command=self.add_bad_annotation).grid(row=1, column=5, padx=3, pady=5, sticky="ew")
+        ttk.Button(edit, text="Update span (U)", command=self.update_annotation_span).grid(row=1, column=0, columnspan=2, pady=5, sticky="ew")
+        ttk.Button(edit, text="Keep (K)", command=lambda: self.set_annotation_decision("keep")).grid(row=1, column=2, pady=5, sticky="ew")
+        ttk.Button(edit, text="Approve BAD (A)", command=lambda: self.set_annotation_decision("approved_bad")).grid(row=1, column=3, padx=3, pady=5, sticky="ew")
+        ttk.Button(edit, text="Dismiss (D)", command=lambda: self.set_annotation_decision("dismissed")).grid(row=1, column=4, pady=5, sticky="ew")
+        ttk.Button(edit, text="Add BAD span (+)", command=self.add_bad_annotation).grid(row=1, column=5, padx=3, pady=5, sticky="ew")
+        ttk.Button(edit, text="Add BLINK", command=self.add_blink_annotation).grid(row=1, column=6, padx=3, pady=5, sticky="ew")
         ttk.Label(edit, text="Notes").grid(row=2, column=0, pady=(3, 0), sticky="w")
         ttk.Entry(edit, textvariable=self.review_notes, width=52).grid(row=2, column=1, columnspan=5, pady=(3, 0), sticky="ew")
+        ttk.Label(edit, textvariable=self.annotation_selection_status, anchor="w").grid(
+            row=3, column=0, columnspan=6, pady=(5, 0), sticky="ew"
+        )
 
     def _build_channel_tab(self) -> None:
         ttk = self.ttk
@@ -336,6 +395,12 @@ class QCReviewApplication:
         self.load_record(record)
 
     def load_record(self, record: ReviewRecord) -> None:
+        is_initial_load = self.current_record is None
+        previously_visible = (
+            set(self.channels.loc[list(self.visible_channel_indices), "channel"])
+            if not self.channels.empty and self.visible_channel_indices
+            else set()
+        )
         self.current_record = record
         self.raw = mne.io.read_raw_fif(record.raw_path, preload=False, verbose="error")
         self.annotations, self.channels = read_review_tables(record)
@@ -343,7 +408,12 @@ class QCReviewApplication:
         self.start_seconds.set(0.0)
         self._display_cache_key = None
         self._display_cache = None
-        self.visible_channel_indices = set(self.channels.index[:1])
+        self.selected_time_seconds = None
+        self.visible_channel_indices = set(
+            self.channels.index[self.channels["channel"].isin(previously_visible)]
+        )
+        if is_initial_load and not self.channels.empty:
+            self.visible_channel_indices = {self.channels.index[0]}
         self.refresh_tables()
         self.status.set(f"Loaded {record.label}. Changes autosave after each decision.")
 
@@ -389,6 +459,8 @@ class QCReviewApplication:
             self.annotation_tree.focus(valid_annotation_selection[0])
             self.annotation_tree.see(valid_annotation_selection[0])
             self.select_annotation()
+        else:
+            self.update_annotation_selection_status()
         if not self.channels.empty:
             self.select_channel()
 
@@ -426,6 +498,7 @@ class QCReviewApplication:
         return "break"
 
     def select_annotation(self, _event=None) -> None:
+        self.update_annotation_selection_status()
         index = self._selected_index(self.annotation_tree, "a")
         if index is None:
             return
@@ -437,6 +510,20 @@ class QCReviewApplication:
         self.review_notes.set(str(row.review_notes))
         self.start_seconds.set(max(0.0, float(row.onset) - self.window_seconds.get() / 3))
         self.draw_trace()
+
+    def update_annotation_selection_status(self) -> None:
+        count = len(self._selected_indices(self.annotation_tree, "a"))
+        self.annotation_selection_status.set(
+            f"{count} artifact{'s' if count != 1 else ''} selected."
+        )
+
+    def select_trace_time(self, event) -> None:
+        """Mark the time clicked in any displayed EEG trace."""
+        if event.button != 1 or event.inaxes not in self.axes or event.xdata is None:
+            return
+        self.selected_time_seconds = float(event.xdata)
+        self.draw_trace()
+        self.annotation_onset.set(self.selected_time_seconds)
 
     def select_channel(self, _event=None) -> None:
         index = self._selected_index(self.channel_tree, "c")
@@ -534,6 +621,28 @@ class QCReviewApplication:
                 bbox={"facecolor": "white", "edgecolor": "#111111", "alpha": 0.9},
                 zorder=6,
             )
+        if self.selected_time_seconds is not None and start <= self.selected_time_seconds <= stop:
+            for axis in axes:
+                axis.axvline(
+                    self.selected_time_seconds,
+                    color="#7b1fa2",
+                    linewidth=1.4,
+                    linestyle="-",
+                    zorder=7,
+                )
+            axes[0].annotate(
+                f"t = {self.selected_time_seconds:.3f} s",
+                xy=(self.selected_time_seconds, 0),
+                xycoords=("data", "axes fraction"),
+                xytext=(5, 5),
+                textcoords="offset points",
+                ha="left",
+                va="bottom",
+                fontsize=8,
+                color="#4a148c",
+                bbox={"facecolor": "white", "edgecolor": "#7b1fa2", "alpha": 0.9},
+                zorder=8,
+            )
         axes[-1].set_xlabel("Time (s)")
         for axis in axes:
             axis.set_xlim(start, stop)
@@ -599,11 +708,20 @@ class QCReviewApplication:
             crop_stop = min(float(self.raw.times[-1]), stop + context_seconds)
             display_raw = self.raw.copy().crop(tmin=crop_start, tmax=crop_stop).load_data()
             highpass, lowpass, notch, average_reference = settings
+            # MNE's ``picks='data'`` deliberately excludes auxiliary channels
+            # such as EOG.  The display controls should nevertheless clean the
+            # channels the reviewer can plot, including EOG.
+            display_picks = mne.pick_types(
+                display_raw.info,
+                eeg=True,
+                eog=True,
+                exclude=[],
+            )
             if highpass is not None or lowpass is not None:
                 display_raw.filter(
                     l_freq=highpass,
                     h_freq=lowpass,
-                    picks="data",
+                    picks=display_picks,
                     method="iir",
                     iir_params={"order": 4, "ftype": "butter"},
                     verbose="error",
@@ -611,7 +729,7 @@ class QCReviewApplication:
             if notch:
                 display_raw.notch_filter(
                     freqs=list(notch),
-                    picks="data",
+                    picks=display_picks,
                     method="iir",
                     iir_params={"order": 4, "ftype": "butter"},
                     verbose="error",
@@ -685,6 +803,29 @@ class QCReviewApplication:
             "annotation_source": "manual_qc_review",
             "review_status": "approved_bad",
             "reviewed_description": self.annotation_bad_label.get(),
+            "reviewer": self._reviewer(),
+            "reviewed_at": _timestamp(),
+            "review_notes": self.review_notes.get().strip(),
+        }
+        self.save_current()
+        self.refresh_tables(annotation_selection=[new_index])
+
+    def add_blink_annotation(self) -> None:
+        """Add a reviewer-marked blink without excluding data as BAD."""
+        centre = float(self.annotation_onset.get())
+        duration = 0.75
+        onset = centre - duration / 2
+        if onset < 0:
+            self.status.set("Manual BLINK centre must be at least 0.375 s.")
+            return
+        new_index = 0 if self.annotations.empty else int(self.annotations.index.max()) + 1
+        self.annotations.loc[new_index] = {
+            "onset": onset,
+            "duration": duration,
+            "trial_type": "MANUAL_BLINK",
+            "annotation_source": "manual_qc_review",
+            "review_status": "keep",
+            "reviewed_description": "BLINK",
             "reviewer": self._reviewer(),
             "reviewed_at": _timestamp(),
             "review_notes": self.review_notes.get().strip(),
