@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--line-frequency", type=float, default=50.0)
     parser.add_argument("--max-iter", type=int, default=2000)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    parser.add_argument("--random-state", type=int, default=435656)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -41,6 +42,7 @@ def main(args: argparse.Namespace) -> None:
         line_frequency_hz=args.line_frequency,
         max_iter=args.max_iter,
         device=args.device,
+        random_state=args.random_state,
     )
     register_derivative_description(
         args.derivatives_path,

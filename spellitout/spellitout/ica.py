@@ -34,6 +34,7 @@ class AMICAConfig:
     line_frequency_hz: float = 50.0
     max_iter: int = 2000
     device: str = "cuda"
+    random_state: int = 435656
 
 
 def _require_review_complete(annotations: pd.DataFrame, channels: pd.DataFrame, run: str) -> None:
@@ -186,9 +187,24 @@ def fit_amica(raw: mne.io.BaseRaw, config: AMICAConfig):
         raise RuntimeError("No samples remain for AMICA after omitting reviewed BAD_* spans.")
     from amica import AMICA
 
-    model = AMICA(device=config.device, n_components=n_components, max_iter=config.max_iter, verbose=2)
+    model = AMICA(
+        device=config.device,
+        n_components=n_components,
+        max_iter=config.max_iter,
+        random_state=config.random_state,
+        verbose=2,
+    )
     model.fit(data)
-    return model, model.to_mne(info=eeg.info), n_components, rank_estimate, len(data)
+    ica = model.to_mne(info=eeg.info)
+    unmixing_rank = np.linalg.matrix_rank(ica.unmixing_matrix_)
+    if unmixing_rank != n_components:
+        raise RuntimeError(
+            "AMICA produced a numerically singular decomposition "
+            f"(unmixing rank {unmixing_rank}/{n_components}). "
+            "No AMICA ICA/component outputs were written; retry Stage 4 with a different "
+            "random seed or device."
+        )
+    return model, ica, n_components, rank_estimate, len(data)
 
 
 def component_energy_fractions(mixing: np.ndarray, sources: np.ndarray) -> np.ndarray:

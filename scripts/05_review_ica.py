@@ -49,6 +49,7 @@ class ICAReviewApplication:
         self.sources = self.ica.get_sources(self.raw)
         self.evoked_cache: dict[tuple[int, str], tuple[np.ndarray, np.ndarray, int]] = {}
         self.evoked_errors: dict[str, str] = {}
+        self.active_component: int | None = None
         self.psd_frequencies, self.component_psd = self._precompute_psd()
         self._precompute_evokeds()
         root.title("Spell-IT-OUT AMICA component review")
@@ -174,6 +175,20 @@ class ICAReviewApplication:
     def selected(self) -> list[int]:
         return [int(item[1:]) for item in self.tree.selection()]
 
+    def focused_component(self) -> int | None:
+        """Return the component the reviewer most recently clicked.
+
+        A Treeview in ``extended`` mode can retain several selections.  Tk
+        returns those items in display order, not click order, so using the
+        first selected item could keep plotting component 0 while a later row
+        was clicked.  ``focus`` tracks the active row instead.
+        """
+        focused = self.tree.focus()
+        if focused.startswith("c"):
+            return int(focused[1:])
+        selected = self.selected()
+        return selected[-1] if selected else None
+
     def refresh(self, selected: list[int] | None = None) -> None:
         if selected is None: selected = self.selected()
         self.tree.delete(*self.tree.get_children())
@@ -192,14 +207,20 @@ class ICAReviewApplication:
                 ),
             )
         valid = [f"c{component}" for component in selected if component in set(self.table.component)]
-        if valid: self.tree.selection_set(valid)
-        elif len(self.table): self.tree.selection_set("c0")
+        if valid:
+            self.tree.selection_set(valid)
+            self.tree.focus(valid[-1])
+        elif len(self.table):
+            self.tree.selection_set("c0")
+            self.tree.focus("c0")
         self.select()
 
     def select(self, _event=None) -> None:
-        selected = self.selected()
-        if not selected: return
-        row = self.table.set_index("component").loc[selected[0]]
+        component = self.focused_component()
+        if component is None:
+            return
+        self.active_component = component
+        row = self.table.set_index("component").loc[component]
         self.notes.set(str(row.review_notes))
         self.draw()
 
@@ -218,15 +239,19 @@ class ICAReviewApplication:
         # highlight the next component after the last selected one, if any remain
         next_component = min((c for c in self.table.component if c > max(selected)), default=None)
         if next_component is not None:
-            self.tree.selection_set(f"c{next_component}"); self.select()
+            self.tree.selection_set(f"c{next_component}")
+            self.tree.focus(f"c{next_component}")
+            self.select()
 
     def shift(self, direction: int) -> None:
         self.start.set(max(0.0, self.start.get() + direction * self.window.get() * .8)); self.draw()
 
     def draw(self) -> None:
-        selected = self.selected()
-        if not selected: return
-        component = selected[0]
+        component = self.active_component
+        if component is None:
+            component = self.focused_component()
+        if component is None:
+            return
         duration = float(self.raw.times[-1]); window = max(.1, float(self.window.get()))
         start = min(max(0.0, float(self.start.get())), max(0.0, duration - window)); stop = min(duration, start + window)
         sources = self.sources.get_data(picks=[component], start=int(start*self.raw.info["sfreq"]), stop=int(stop*self.raw.info["sfreq"]))[0]
