@@ -11,9 +11,6 @@ import mne
 import numpy as np
 import pandas as pd
 
-from .plotting import plot_erd_grid
-
-
 ERD_BANDS = {
     "Theta": (4.0, 8.0),
     "Alpha": (8.0, 12.0),
@@ -39,15 +36,12 @@ class ERDERSConfig:
     event_name: str = "repetition_cue"
     tmin: float = -10.0
     tmax: float = 25.0
-    baseline: tuple[float, float] = (-3.0, -0.1)
     resample_sfreq: float = 256.0
     fmin: float = 2.0
     fmax: float = 98.0
     fstep: float = 2.0
     n_cycles_divisor: float = 2.0
-    max_bad_duration: float | None = 0.5
     apply_csd: bool = True
-    vlim_db: float | None = 3.0
 
 
 def _bad_intervals(raw: mne.io.BaseRaw) -> list[tuple[float, float, str]]:
@@ -93,7 +87,6 @@ def epoch_badness(
     events: np.ndarray,
     tmin: float,
     tmax: float,
-    max_bad_duration: float | None,
 ) -> pd.DataFrame:
     """Report BAD overlap per event, counting overlapping spans only once."""
     intervals = _bad_intervals(raw)
@@ -106,7 +99,6 @@ def epoch_badness(
             event_time + tmax,
             intervals,
         )
-        rejected = max_bad_duration is not None and overlap > max_bad_duration
         rows.append(
             {
                 "epoch_index": index,
@@ -114,11 +106,22 @@ def epoch_badness(
                 "event_time": event_time,
                 "bad_overlap_seconds": overlap,
                 "bad_descriptions": ";".join(descriptions),
-                "kept": not rejected,
-                "drop_reason": "BAD_duration" if rejected else "",
+                "tfr_available": False,
+                "drop_reason": "",
             }
         )
     return pd.DataFrame(rows)
+
+
+def annotations_table(raw: mne.io.BaseRaw) -> pd.DataFrame:
+    """Serialise all raw annotations alongside a subject-level TFR checkpoint."""
+    return pd.DataFrame(
+        {
+            "onset": raw.annotations.onset,
+            "duration": raw.annotations.duration,
+            "description": raw.annotations.description,
+        }
+    )
 
 
 def _apply_ica_decisions(raw: mne.io.BaseRaw, ica_path: Path, components_path: Path) -> mne.io.BaseRaw:
@@ -158,8 +161,8 @@ def compute_subject_tfr(
     raw: mne.io.BaseRaw,
     config: ERDERSConfig,
     logger: logging.Logger,
-) -> tuple[mne.time_frequency.AverageTFR, pd.DataFrame]:
-    """Compute one subject-level, baseline-corrected average TFR."""
+) -> tuple[mne.time_frequency.EpochsTFR, pd.DataFrame]:
+    """Compute and retain every extractable subject-level epoch TFR."""
     events, event_ids = mne.events_from_annotations(
         raw,
         event_id={config.event_name: 1},
@@ -172,14 +175,10 @@ def compute_subject_tfr(
         events,
         config.tmin,
         config.tmax,
-        config.max_bad_duration,
     )
-    kept_indices = report.index[report["kept"]].to_numpy()
-    if len(kept_indices) == 0:
-        raise RuntimeError("No epochs remain after BAD-duration rejection.")
     epochs = mne.Epochs(
         raw,
-        events[kept_indices],
+        events,
         event_id={config.event_name: 1},
         tmin=config.tmin,
         tmax=config.tmax,
@@ -187,8 +186,14 @@ def compute_subject_tfr(
         baseline=None,
         reject_by_annotation=False,
         preload=True,
+        metadata=report,
         verbose="error",
     )
+    available_indices = epochs.selection
+    report.loc[available_indices, "tfr_available"] = True
+    report.loc[~report["tfr_available"], "drop_reason"] = "TOO_SHORT"
+    if not len(epochs):
+        raise RuntimeError("No full-length epochs are available for TFR computation.")
     if config.apply_csd:
         epochs = mne.preprocessing.compute_current_source_density(epochs, verbose="error")
     freqs = np.arange(config.fmin, config.fmax + config.fstep / 2, config.fstep)
@@ -198,88 +203,72 @@ def compute_subject_tfr(
         n_cycles=freqs / config.n_cycles_divisor,
         use_fft=True,
         return_itc=False,
-        average=True,
+        average=False,
         n_jobs=-1,
         verbose="error",
     )
-    tfr.apply_baseline(config.baseline, mode="logratio", verbose="error")
-    report.loc[kept_indices, "kept"] = True
-    report["subject_epoch_count"] = len(epochs)
-    logger.info("%s: retained %d/%d epochs", config.event_name, len(epochs), len(events))
+    logger.info("%s: computed TFRs for %d/%d full-length epochs", config.event_name, len(epochs), len(events))
     return tfr, report
 
 
-def run_grand_average(
-    subjects: dict[str, mne.io.BaseRaw],
+def subject_tfr_paths(output_root: Path, subject: str, condition: str) -> dict[str, Path]:
+    directory = output_root / subject / "ses-01" / "eeg"
+    base = f"{subject}_ses-01_task-{condition}_desc-erders"
+    return {
+        "tfr": directory / f"{base}_tfr.h5",
+        "epochs": directory / f"{base}_epochs.tsv",
+        "annotations": directory / f"{base}_annotations.tsv",
+        "metadata": directory / f"{base}.json",
+    }
+
+
+def subject_checkpoint_matches(
+    paths: dict[str, Path],
     config: ERDERSConfig,
-    logger: logging.Logger,
-) -> tuple[mne.time_frequency.AverageTFR, pd.DataFrame, dict[str, mne.time_frequency.AverageTFR]]:
-    subject_tfrs = {}
-    reports = []
-    for subject, raw in subjects.items():
-        tfr, report = compute_subject_tfr(raw, config, logger)
-        subject_tfrs[subject] = tfr
-        report.insert(0, "subject", subject)
-        reports.append(report)
-    if not subject_tfrs:
-        raise RuntimeError("No subject TFRs were computed.")
-    data = np.stack([tfr.data for tfr in subject_tfrs.values()], axis=0)
-    grand = mne.time_frequency.AverageTFRArray(
-        subject_tfrs[next(iter(subject_tfrs))].info,
-        data.mean(axis=0),
-        subject_tfrs[next(iter(subject_tfrs))].times,
-        subject_tfrs[next(iter(subject_tfrs))].freqs,
-        nave=len(subject_tfrs),
-        method="morlet",
+    input_path: Path,
+) -> bool:
+    """Return whether an existing subject checkpoint matches its calculation input."""
+    if not all(path.exists() for path in paths.values()):
+        return False
+    metadata = json.loads(paths["metadata"].read_text(encoding="utf-8"))
+    configuration = json.loads(json.dumps(asdict(config)))
+    return (
+        metadata.get("configuration") == configuration
+        and metadata.get("input_mtime_ns") == input_path.stat().st_mtime_ns
+        and metadata.get("input_path") == str(input_path)
     )
-    return grand, pd.concat(reports, ignore_index=True), subject_tfrs
 
 
-def write_erd_ers_outputs(
+def write_subject_tfr_outputs(
     output_dir: Path,
+    subject: str,
     condition: str,
-    grand: mne.time_frequency.AverageTFR,
+    tfr: mne.time_frequency.EpochsTFR,
     epoch_report: pd.DataFrame,
-    subject_tfrs: dict[str, mne.time_frequency.AverageTFR],
+    annotations: pd.DataFrame,
     config: ERDERSConfig,
-    input_paths: dict[str, Path],
+    input_path: Path,
     overwrite: bool,
 ) -> dict[str, Path]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    base = f"task-{condition}_desc-erders"
-    paths = {
-        "tfr": output_dir / f"{base}_tfr.h5",
-        "epochs": output_dir / f"{base}_epochs.tsv",
-        "metadata": output_dir / f"{base}.json",
-        "figure": output_dir / f"{base}.png",
-    }
+    paths = subject_tfr_paths(output_dir, subject, condition)
+    paths["tfr"].parent.mkdir(parents=True, exist_ok=True)
     if not overwrite and any(path.exists() for path in paths.values()):
-        raise FileExistsError(f"ERD/ERS output exists for {condition}; pass --overwrite.")
-    mne.time_frequency.write_tfrs(paths["tfr"], [grand], overwrite=overwrite)
+        raise FileExistsError(f"ERD/ERS output exists for {subject} {condition}; pass --overwrite.")
+    mne.time_frequency.write_tfrs(paths["tfr"], [tfr], overwrite=overwrite)
     epoch_report.to_csv(paths["epochs"], sep="\t", index=False)
-    fig = plot_erd_grid(
-        grand,
-        ERD_BANDS,
-        TRIAL_WINDOWS,
-        vlim=(None if config.vlim_db is None else (-config.vlim_db, config.vlim_db)),
-        cmap="RdBu_r",
-        title=f"{condition.capitalize()}: Grand-average ERD/ERS (dB)",
-        cbar_label="ERD / ERS (dB)",
-    )
-    fig.savefig(paths["figure"], dpi=300)
+    annotations.to_csv(paths["annotations"], sep="\t", index=False)
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "subject": subject,
         "condition": condition,
-        "subjects": sorted(subject_tfrs),
-        "n_subjects": len(subject_tfrs),
         "input_stage": config.input_stage,
-        "input_paths": {key: str(value) for key, value in input_paths.items()},
+        "input_path": str(input_path),
+        "input_mtime_ns": input_path.stat().st_mtime_ns,
         "configuration": asdict(config),
         "bands_hz": ERD_BANDS,
         "plot_windows_s": TRIAL_WINDOWS,
-        "normalization": "10*log10(power / mean baseline power)",
-        "subject_weighting": "equal subject weighting",
-        "bad_span_policy": "reject if union of BAD_* overlap exceeds max_bad_duration",
+        "normalization": "none; apply baseline during plotting",
+        "bad_span_policy": "all extractable epochs retained; BAD_* overlap is recorded in epochs.tsv",
     }
     paths["metadata"].write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return paths

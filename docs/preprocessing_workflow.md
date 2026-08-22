@@ -14,16 +14,17 @@ decision.
 3. `03_review_qc` is the human review gate. It updates only
    `desc-qc_annotations.tsv` and `desc-channelqc.tsv`: global artifact candidates
    can be approved or dismissed, and every channel receives a per-run decision.
-4. `04_amica` calculates the approved condition-level bad-channel union,
+4. `04_amica` or `04_ica` calculates the approved condition-level bad-channel union,
    interpolates that same set in every run, applies line-noise removal and the
    final common average reference, saves the concatenated ICA input, and fits
-   AMICA in one invocation.
-5. `05_review_ica` reviews AMICA components and records manual decisions;
+   AMICA or Extended Infomax in one invocation.
+5. `05_review_ica` reviews either decomposition and records manual decisions;
    applying selected components remains a later explicit operation.
 6. `06_blink_rate` summarizes reviewed spontaneous blink counts and rates for
    each run and task phase in one subject-level BIDS TSV.
-7. `07_erd_ers` computes subject-weighted, full-trial ERD/ERS from the
-   condition-level AMICA input or from an in-memory ICA-cleaned copy.
+7. `07_erd_ers` computes and saves all full-trial epoch TFRs per subject,
+   including BAD-span evidence; paper figures are made separately from those
+   checkpoints.
 
 The source raw dataset is immutable. Each derivative sidecar records source
 identity, configuration, and decisions required to reproduce the next stage.
@@ -105,39 +106,59 @@ python scripts/07_erd_ers.py \
   --condition silent \
   --subjects 1 2 3 \
   --input-stage amica_input \
-  --max-bad-duration 0.5 \
   --overwrite
 ```
 
-Stage 7 epochs `repetition_cue` from -10 to 25 seconds, uses a -3 to -0.1
-second baseline, computes Morlet TFRs from 2 to 98 Hz, applies CSD by default,
-and reports baseline-normalised values as dB log-ratios. `BAD_*` spans are
-unioned within each epoch and an epoch is rejected only when their total overlap
-exceeds `--max-bad-duration`. Subjects contribute equally to the grand average.
-Use `--vlim-db none` to let the plot choose symmetric limits automatically from
-the grand-average data.
+Stage 7 epochs `repetition_cue` from -10 to 25 seconds, computes Morlet TFRs
+from 2 to 98 Hz, and applies CSD by default. It retains every full-length epoch,
+including epochs that overlap `BAD_*` spans. Each subject checkpoint contains an
+epoch-level TFR, an epoch table with the unioned BAD-overlap duration, and a TSV
+copy of all source annotations. Events at recording boundaries are retained in
+the epoch table with `tfr_available=False` and `TOO_SHORT` rather than silently
+discarded.
 
 The default `amica_input` mode is useful before ICA review is complete. After
 all component decisions are available, use `--input-stage cleaned`; this mode
 applies only components marked `reject` in memory and does not create a fake
 cleaned FIF.
 
+Create the paper figure separately, choosing the BAD-overlap criterion at plot
+time:
+
+```bash
+python per_paper/plot_erd_ers.py \
+  --condition silent \
+  --subjects 1 2 3 \
+  --max-bad-duration 0.5 \
+  --vlim-db none
+```
+
+The plotter selects eligible epochs, averages within each subject, applies the
+-3 to -0.1 second baseline as a dB log-ratio, then averages subjects equally.
+
 ## Running stage 4
 
 ```bash
 python scripts/04_amica.py --condition silent --subjects 1 --device cuda
+
+# Extended Infomax alternative
+python scripts/04_ica.py --condition silent --subjects 1
 ```
 
 All selected runs must have completed annotation and EEG-channel decisions.
 The default line-noise method is a 50 Hz notch; use `--line-noise-method prep`
 to use only PREP's line-noise procedure instead. The script writes the
-condition-level ICA-input checkpoint before starting the AMICA fit.
+condition-level ICA-input checkpoint before starting the fit. Extended
+Infomax outputs use `desc-infomax*`, so they can coexist with AMICA outputs.
 
 ## Running stage 5
 
 ```bash
 python scripts/05_review_ica.py --condition silent --subject 1 --reviewer Tommaso
+
+# Review Extended Infomax instead
+python scripts/05_review_ica.py --condition silent --subject 1 --decomposition infomax --reviewer Tommaso
 ```
 
-This GUI records component keep/reject decisions in the AMICA component TSV;
-it does not apply them to a cleaned EEG derivative.
+This GUI records component keep/reject decisions in the selected decomposition's
+component TSV; it does not apply them to a cleaned EEG derivative.

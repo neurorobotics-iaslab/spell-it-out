@@ -30,6 +30,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-iter", type=int, default=2000)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--random-state", type=int, default=435656)
+    parser.add_argument("--n-mixtures", type=int, default=3)
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=0.05,
+        help="Initial AMICA learning rate (default: 0.05).",
+    )
+    parser.add_argument(
+        "--no-newton",
+        action="store_true",
+        help="Disable AMICA Newton updates for a conservative recovery fit.",
+    )
+    parser.add_argument(
+        "--max-unmixing-condition",
+        type=float,
+        default=1e6,
+        help="Reject AMICA decompositions with a larger unmixing condition number.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -43,6 +61,10 @@ def main(args: argparse.Namespace) -> None:
         max_iter=args.max_iter,
         device=args.device,
         random_state=args.random_state,
+        n_mixtures=args.n_mixtures,
+        learning_rate=args.learning_rate,
+        do_newton=not args.no_newton,
+        max_unmixing_condition=args.max_unmixing_condition,
     )
     register_derivative_description(
         args.derivatives_path,
@@ -84,7 +106,7 @@ def main(args: argparse.Namespace) -> None:
         # Persist the repaired/referenced checkpoint before the potentially long fit.
         input_path = eeg_dir / f"{base}_desc-ica-input_raw.fif"
         pooled.save(input_path, overwrite=args.overwrite)
-        model, ica, n_components, rank_estimate, n_fit_samples = fit_amica(pooled, config)
+        model, ica, n_components, rank_estimate, n_fit_samples, unmixing_condition = fit_amica(pooled, config)
         paths = write_amica_outputs(
             eeg_dir,
             base,
@@ -97,6 +119,7 @@ def main(args: argparse.Namespace) -> None:
             excluded,
             rank_estimate,
             n_fit_samples,
+            unmixing_condition,
             overwrite=args.overwrite,
             write_ica_input=False,
         )

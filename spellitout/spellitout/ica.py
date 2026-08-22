@@ -35,6 +35,22 @@ class AMICAConfig:
     max_iter: int = 2000
     device: str = "cuda"
     random_state: int = 435656
+    n_mixtures: int = 3
+    learning_rate: float = 0.05
+    do_newton: bool = True
+    max_unmixing_condition: float = 1e6
+
+
+@dataclass(frozen=True)
+class InfomaxConfig:
+    """Choices affecting the Extended Infomax decomposition."""
+
+    line_noise_method: str = "notch"
+    line_frequency_hz: float = 50.0
+    max_iter: int = 2000
+    random_state: int = 435656
+    rank_tolerance: float = 1e-7
+    max_unmixing_condition: float = 1e6
 
 
 def _require_review_complete(annotations: pd.DataFrame, channels: pd.DataFrame, run: str) -> None:
@@ -86,7 +102,10 @@ def _line_frequencies(raw: mne.io.BaseRaw, line_frequency_hz: float) -> list[flo
     ]
 
 
-def remove_line_noise(raw: mne.io.BaseRaw, config: AMICAConfig) -> mne.io.BaseRaw:
+def remove_line_noise(
+    raw: mne.io.BaseRaw,
+    config: AMICAConfig | InfomaxConfig,
+) -> mne.io.BaseRaw:
     """Remove line noise without altering channel decisions or applying PREP reference."""
     raw = raw.copy().load_data()
     frequencies = _line_frequencies(raw, config.line_frequency_hz)
@@ -147,7 +166,7 @@ def prepare_amica_input(
     runs: dict[str, mne.io.BaseRaw],
     annotations: dict[str, pd.DataFrame],
     channel_tables: dict[str, pd.DataFrame],
-    config: AMICAConfig,
+    config: AMICAConfig | InfomaxConfig,
     logger: logging.Logger,
 ) -> tuple[mne.io.BaseRaw, list[str], list[str], pd.DataFrame]:
     """Apply reviewed decisions, harmonize sensors, reference, then concatenate."""
@@ -168,10 +187,21 @@ def prepare_amica_input(
         prepared.append(current)
     pooled = mne.concatenate_raws(prepared)
     logger.info(
-        "Prepared AMICA input: %d run(s), %d interpolated channel(s), %d excluded channel(s)",
+        "Prepared ICA input: %d run(s), %d interpolated channel(s), %d excluded channel(s)",
         len(prepared), len(interpolated), len(excluded),
     )
     return pooled, interpolated, excluded, plan
+
+
+def prepare_ica_input(
+    runs: dict[str, mne.io.BaseRaw],
+    annotations: dict[str, pd.DataFrame],
+    channel_tables: dict[str, pd.DataFrame],
+    config: AMICAConfig | InfomaxConfig,
+    logger: logging.Logger,
+) -> tuple[mne.io.BaseRaw, list[str], list[str], pd.DataFrame]:
+    """Prepare the condition-level input shared by ICA estimators."""
+    return prepare_amica_input(runs, annotations, channel_tables, config, logger)
 
 
 def fit_amica(raw: mne.io.BaseRaw, config: AMICAConfig):
@@ -192,11 +222,16 @@ def fit_amica(raw: mne.io.BaseRaw, config: AMICAConfig):
         n_components=n_components,
         max_iter=config.max_iter,
         random_state=config.random_state,
+        n_mixtures=config.n_mixtures,
+        lrate=config.learning_rate,
+        do_newton=config.do_newton,
         verbose=2,
     )
     model.fit(data)
     ica = model.to_mne(info=eeg.info)
+    singular_values = np.linalg.svd(ica.unmixing_matrix_, compute_uv=False)
     unmixing_rank = np.linalg.matrix_rank(ica.unmixing_matrix_)
+    unmixing_condition = float(singular_values[0] / singular_values[-1])
     if unmixing_rank != n_components:
         raise RuntimeError(
             "AMICA produced a numerically singular decomposition "
@@ -204,7 +239,59 @@ def fit_amica(raw: mne.io.BaseRaw, config: AMICAConfig):
             "No AMICA ICA/component outputs were written; retry Stage 4 with a different "
             "random seed or device."
         )
-    return model, ica, n_components, rank_estimate, len(data)
+    if not np.isfinite(unmixing_condition) or unmixing_condition > config.max_unmixing_condition:
+        raise RuntimeError(
+            "AMICA produced an ill-conditioned decomposition "
+            f"(condition number {unmixing_condition:.3e}; maximum allowed "
+            f"{config.max_unmixing_condition:.3e}). No AMICA ICA/component "
+            "outputs were written; retry Stage 4 with different optimisation settings."
+        )
+    return model, ica, n_components, rank_estimate, len(data), unmixing_condition
+
+
+def fit_extended_infomax(raw: mne.io.BaseRaw, config: InfomaxConfig):
+    """Fit Extended Infomax, omitting confirmed BAD spans only at fit time."""
+    eeg = raw.copy().pick("eeg")
+    rank_estimate = mne.compute_rank(
+        eeg,
+        tol=config.rank_tolerance,
+        tol_kind="relative",
+    )["eeg"]
+    # The average reference applied during input preparation removes one EEG
+    # dimension, even when the numerical rank estimate is overly optimistic.
+    rank_cap = len(eeg.ch_names) - 1
+    n_components = min(rank_estimate, rank_cap)
+    if n_components < 2:
+        raise RuntimeError("Extended Infomax requires at least two effective EEG dimensions.")
+    n_fit_samples = eeg.get_data(reject_by_annotation="omit").shape[1]
+    if not n_fit_samples:
+        raise RuntimeError(
+            "No samples remain for Extended Infomax after omitting reviewed BAD_* spans."
+        )
+    ica = mne.preprocessing.ICA(
+        n_components=n_components,
+        method="infomax",
+        fit_params={"extended": True},
+        max_iter=config.max_iter,
+        random_state=config.random_state,
+    )
+    ica.fit(eeg, reject_by_annotation=True, verbose="error")
+    singular_values = np.linalg.svd(ica.unmixing_matrix_, compute_uv=False)
+    unmixing_rank = np.linalg.matrix_rank(ica.unmixing_matrix_)
+    unmixing_condition = float(singular_values[0] / singular_values[-1])
+    if unmixing_rank != n_components:
+        raise RuntimeError(
+            "Extended Infomax produced a numerically singular decomposition "
+            f"(unmixing rank {unmixing_rank}/{n_components}). No ICA/component "
+            "outputs were written; retry Stage 4 with another random seed."
+        )
+    if not np.isfinite(unmixing_condition) or unmixing_condition > config.max_unmixing_condition:
+        raise RuntimeError(
+            "Extended Infomax produced an ill-conditioned decomposition "
+            f"(condition number {unmixing_condition:.3e}; maximum allowed "
+            f"{config.max_unmixing_condition:.3e}). No ICA/component outputs were written."
+        )
+    return ica, n_components, rank_estimate, n_fit_samples, unmixing_condition
 
 
 def component_energy_fractions(mixing: np.ndarray, sources: np.ndarray) -> np.ndarray:
@@ -226,12 +313,12 @@ def component_energy_fractions(mixing: np.ndarray, sources: np.ndarray) -> np.nd
         energies[component] = float(np.var(contribution, axis=1, ddof=1).mean())
     total = float(energies.sum())
     if not np.isfinite(total) or total <= 0:
-        raise RuntimeError("Could not compute positive component energies for AMICA output.")
+        raise RuntimeError("Could not compute positive component energies for ICA output.")
     return energies / total
 
 
 def component_review_table(raw: mne.io.BaseRaw, ica: mne.preprocessing.ICA) -> pd.DataFrame:
-    """Create component evidence and editable decisions after AMICA fit."""
+    """Create component evidence and editable decisions after an ICA fit."""
     try:
         import torch
         from mne_icalabel.iclabel import iclabel_label_components
@@ -244,7 +331,8 @@ def component_review_table(raw: mne.io.BaseRaw, ica: mne.preprocessing.ICA) -> p
     labels = pd.DataFrame(probabilities, columns=ICLABEL_CLASSES)
     labels.insert(0, "component", np.arange(len(labels)))
     eeg = raw.copy().pick("eeg")
-    sources = ica.get_sources(eeg).get_data(reject_by_annotation="omit")
+    # sources = ica.get_sources(eeg).get_data(reject_by_annotation="omit")
+    sources = ica.get_sources(eeg).get_data()
     contributions = component_energy_fractions(ica.get_components(), sources)
     labels.insert(
         1,
@@ -275,6 +363,7 @@ def write_amica_outputs(
     excluded: list[str],
     rank_estimate: int,
     n_fit_samples: int,
+    unmixing_condition: float,
     overwrite: bool,
     write_ica_input: bool = True,
 ) -> dict[str, Path]:
@@ -305,7 +394,80 @@ def write_amica_outputs(
         "condition_interpolated_channels": interpolated,
         "condition_excluded_channels": excluded,
         "reference": "average EEG reference after condition-level channel harmonization",
-        "amica": {**asdict(config), "n_components": int(len(components)), "mne_rank_estimate": rank_estimate, "n_fit_samples": n_fit_samples},
+        "amica": {
+            **asdict(config),
+            "n_components": int(len(components)),
+            "mne_rank_estimate": rank_estimate,
+            "n_fit_samples": n_fit_samples,
+            "unmixing_condition": unmixing_condition,
+        },
+    }
+    paths["metadata"].write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return paths
+
+
+def write_infomax_outputs(
+    output_dir: Path,
+    base: str,
+    pooled: mne.io.BaseRaw,
+    ica: mne.preprocessing.ICA,
+    plan: pd.DataFrame,
+    config: InfomaxConfig,
+    source_runs: Iterable[str],
+    interpolated: list[str],
+    excluded: list[str],
+    rank_estimate: int,
+    n_fit_samples: int,
+    unmixing_condition: float,
+    overwrite: bool,
+    write_ica_input: bool = True,
+) -> dict[str, Path]:
+    """Write Extended Infomax equivalents of all Stage 4 AMICA outputs."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "ica_input": output_dir / f"{base}_desc-infomax-input_raw.fif",
+        "channels": output_dir / f"{base}_desc-infomax-input_channels.tsv",
+        "ica": output_dir / f"{base}_desc-infomax_ica.fif",
+        "components": output_dir / f"{base}_desc-infomax_components.tsv",
+        "metadata": output_dir / f"{base}_desc-infomax.json",
+    }
+    targets = paths.values() if write_ica_input else [
+        path for key, path in paths.items() if key != "ica_input"
+    ]
+    if not overwrite and any(path.exists() for path in targets):
+        raise FileExistsError(
+            f"Extended Infomax output exists for {base}; pass overwrite=True to replace it."
+        )
+    if write_ica_input:
+        pooled.save(paths["ica_input"], overwrite=overwrite)
+    plan.to_csv(paths["channels"], sep="\t", index=False)
+    ica.save(paths["ica"], overwrite=overwrite)
+    components = component_review_table(pooled, ica)
+    components.to_csv(paths["components"], sep="\t", index=False)
+    metadata = {
+        "schema_version": 1,
+        "source_runs": list(source_runs),
+        "line_noise": {
+            "method": config.line_noise_method,
+            "frequency_hz": config.line_frequency_hz,
+        },
+        "approved_bad_span_policy": (
+            "Omitted from Extended Infomax fitting; retained as annotations in the "
+            "Infomax-input FIF."
+        ),
+        "condition_interpolated_channels": interpolated,
+        "condition_excluded_channels": excluded,
+        "reference": "average EEG reference after condition-level channel harmonization",
+        "infomax": {
+            **asdict(config),
+            "method": "infomax",
+            "extended": True,
+            "n_components": int(len(components)),
+            "mne_rank_estimate": rank_estimate,
+            "n_fit_samples": n_fit_samples,
+            "n_iterations": int(ica.n_iter_),
+            "unmixing_condition": unmixing_condition,
+        },
     }
     paths["metadata"].write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return paths

@@ -76,10 +76,10 @@ def test_erd_epoch_badness_unions_overlapping_bad_spans():
     )
     events = np.array([[150, 0, 1]])
 
-    report = epoch_badness(raw, events, tmin=-1.0, tmax=1.0, max_bad_duration=0.21)
+    report = epoch_badness(raw, events, tmin=-1.0, tmax=1.0)
 
     assert np.isclose(report.loc[0, "bad_overlap_seconds"], 0.20)
-    assert bool(report.loc[0, "kept"])
+    assert not bool(report.loc[0, "tfr_available"])
 
 
 def test_unreviewed_blinks_are_counted_and_reported():
