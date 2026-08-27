@@ -37,6 +37,8 @@ class MinimalPreprocessingConfig:
     detect_blinks: bool = True
     blink_channels: tuple[str, ...] = ()
     blink_threshold_volts: float | None = None
+    blink_l_freq_hz: float = 1.0
+    blink_h_freq_hz: float = 10.0
     blink_pre_seconds: float = 0.25
     blink_post_seconds: float = 0.50
     detect_muscle_candidates: bool = True
@@ -154,9 +156,20 @@ def detect_qc_candidates(
                 if channel in raw.ch_names
             ]
         if channels:
+            if config.blink_l_freq_hz <= 0:
+                raise ValueError("blink_l_freq_hz must be positive.")
+            if config.blink_h_freq_hz <= config.blink_l_freq_hz:
+                raise ValueError("blink_h_freq_hz must be greater than blink_l_freq_hz.")
+            nyquist = raw.info["sfreq"] / 2.0
+            if config.blink_h_freq_hz >= nyquist:
+                raise ValueError(
+                    f"blink_h_freq_hz must be below the raw Nyquist frequency ({nyquist:g} Hz)."
+                )
             events = mne.preprocessing.find_eog_events(
                 raw,
                 ch_name=channels,
+                l_freq=config.blink_l_freq_hz,
+                h_freq=config.blink_h_freq_hz,
                 thresh=config.blink_threshold_volts,
                 reject_by_annotation=False,
                 verbose="error",

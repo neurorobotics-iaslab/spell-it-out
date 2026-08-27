@@ -109,8 +109,8 @@ python scripts/07_erd_ers.py \
   --overwrite
 ```
 
-Stage 7 epochs `repetition_cue` from -10 to 25 seconds, computes Morlet TFRs
-from 2 to 98 Hz, and applies CSD by default. It retains every full-length epoch,
+Stage 7 epochs `repetition_cue` from -10 to 25 seconds, resamples to 128 Hz,
+computes Morlet TFRs from 2 to 60 Hz, and applies CSD by default. It retains every full-length epoch,
 including epochs that overlap `BAD_*` spans. Each subject checkpoint contains an
 epoch-level TFR, an epoch table with the unioned BAD-overlap duration, and a TSV
 copy of all source annotations. Events at recording boundaries are retained in

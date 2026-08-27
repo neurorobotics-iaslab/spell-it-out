@@ -25,10 +25,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--subjects", type=int, nargs="+", required=True)
     parser.add_argument("--derivatives-path", type=Path, default=Path("derivatives/preprocessing"))
     parser.add_argument("--output-path", type=Path, default=Path("derivatives/erders"))
-    parser.add_argument("--input-stage", choices=("amica_input", "cleaned"), default="amica_input")
+    parser.add_argument("--input-stage", choices=("ica_input", "cleaned"), default="ica_input")
     parser.add_argument("--tmin", type=float, default=-10.0)
-    parser.add_argument("--tmax", type=float, default=25.0)
-    parser.add_argument("--resample-sfreq", type=float, default=256.0)
+    parser.add_argument("--tmax", type=float, default=22.0)
+    parser.add_argument("--resample-sfreq", type=float, default=128.0)
+    parser.add_argument("--n-jobs", type=int, default=1)
     parser.add_argument("--no-csd", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -43,7 +44,12 @@ def main(args: argparse.Namespace) -> None:
         tmax=args.tmax,
         resample_sfreq=args.resample_sfreq,
         apply_csd=not args.no_csd,
+        n_jobs=args.n_jobs,
     )
+    if args.n_jobs == 0:
+        raise ValueError("--n-jobs cannot be zero.")
+    if config.resample_sfreq <= 2 * config.fmax:
+        raise ValueError("--resample-sfreq must be greater than twice the 60 Hz TFR maximum.")
     register_derivative_description(
         args.output_path,
         "erders",
@@ -53,11 +59,11 @@ def main(args: argparse.Namespace) -> None:
         subject = get_subject_id(number)
         eeg_dir = args.derivatives_path / subject / "ses-01" / "eeg"
         base = f"{subject}_ses-01_task-{args.condition}"
-        input_path = eeg_dir / f"{base}_desc-ica-input_raw.fif"
-        ica_path = eeg_dir / f"{base}_desc-amica_ica.fif"
-        components_path = eeg_dir / f"{base}_desc-amica_components.tsv"
+        input_path = eeg_dir / f"{base}_desc-infomax-input_raw.fif"
+        ica_path = eeg_dir / f"{base}_desc-infomax_ica.fif"
+        components_path = eeg_dir / f"{base}_desc-infomax_components.tsv"
         if not input_path.exists():
-            raise FileNotFoundError(f"Missing AMICA input: {input_path}")
+            raise FileNotFoundError(f"Missing Infomax input: {input_path}")
         paths = subject_tfr_paths(args.output_path, subject, args.condition)
         cache_matches = not args.overwrite and subject_checkpoint_matches(paths, config, input_path)
         if cache_matches:

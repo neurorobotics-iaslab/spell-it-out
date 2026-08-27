@@ -20,11 +20,11 @@ ERD_BANDS = {
 }
 TRIAL_WINDOWS = {
     "Listening": (-6.5, -3.5),
-    "Baseline": (-3.0, 0.0),
+    "Baseline": (-3.0, -0.1),
     "Sentence repetition": (1.0, 4.0),
     "Repetition end": (6.0, 7.0),
     "Dots": (7.0, 8.8),
-    "Syllable repetition": (8.8, 21.2),
+    "Syllable repetition": (8.8, 20.8),
 }
 
 
@@ -35,13 +35,14 @@ class ERDERSConfig:
     input_stage: str = "amica_input"
     event_name: str = "repetition_cue"
     tmin: float = -10.0
-    tmax: float = 25.0
-    resample_sfreq: float = 256.0
+    tmax: float =  21.2
+    resample_sfreq: float = 128.0
     fmin: float = 2.0
-    fmax: float = 98.0
+    fmax: float = 60.0
     fstep: float = 2.0
     n_cycles_divisor: float = 2.0
     apply_csd: bool = True
+    n_jobs: int = 1
 
 
 def _bad_intervals(raw: mne.io.BaseRaw) -> list[tuple[float, float, str]]:
@@ -146,12 +147,12 @@ def load_condition_input(
     ica_path: Path | None = None,
     components_path: Path | None = None,
 ) -> mne.io.BaseRaw:
-    """Load AMICA input or apply reviewed ICA decisions in memory."""
+    """Load ica input or apply reviewed ICA decisions in memory."""
     raw = mne.io.read_raw_fif(path, preload=True, verbose="error")
-    if input_stage == "amica_input":
+    if input_stage == "ica_input":
         return raw
     if input_stage != "cleaned":
-        raise ValueError("input_stage must be 'amica_input' or 'cleaned'.")
+        raise ValueError("input_stage must be 'ica_input' or 'cleaned'.")
     if ica_path is None or components_path is None:
         raise ValueError("cleaned input requires an ICA FIF and component TSV.")
     return _apply_ica_decisions(raw, ica_path, components_path)
@@ -204,7 +205,7 @@ def compute_subject_tfr(
         use_fft=True,
         return_itc=False,
         average=False,
-        n_jobs=-1,
+        n_jobs=config.n_jobs,
         verbose="error",
     )
     logger.info("%s: computed TFRs for %d/%d full-length epochs", config.event_name, len(epochs), len(events))
