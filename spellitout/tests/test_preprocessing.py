@@ -6,7 +6,13 @@ import mne
 import numpy as np
 import pandas as pd
 
-from spellitout.ica import component_energy_fractions, condition_channel_plan
+from spellitout.ica import (
+    InfomaxConfig,
+    _infomax_convergence_diagnostics,
+    automatic_component_decisions,
+    component_energy_fractions,
+    condition_channel_plan,
+)
 from spellitout.erd_ers import epoch_badness
 from spellitout.blink_rate import _reviewed_blinks, enforce_minimum_blink_separation
 
@@ -27,6 +33,38 @@ from spellitout.review_qc import (
     read_review_tables,
     write_review_tables,
 )
+
+
+def test_infomax_convergence_uses_captured_iteration_not_ambiguous_mne_count():
+    config = InfomaxConfig(max_iter=100, w_change=1e-8)
+    common = {
+        "final_learning_rate": 1e-4,
+        "final_angle_deg": 70.0,
+    }
+
+    stopped_by_change = _infomax_convergence_diagnostics(
+        config,
+        reported_iterations=100,
+        last_step={
+            **common,
+            "iterations_executed": 25,
+            "final_w_change": 1e-9,
+        },
+    )
+    hit_limit = _infomax_convergence_diagnostics(
+        config,
+        reported_iterations=100,
+        last_step={
+            **common,
+            "iterations_executed": 100,
+            "final_w_change": 1e-5,
+        },
+    )
+
+    assert stopped_by_change["converged"] is True
+    assert stopped_by_change["convergence_status"] == "w_change"
+    assert hit_limit["converged"] is False
+    assert hit_limit["convergence_status"] == "max_iter_reached"
 
 
 def test_qc_shortcut_is_not_blocked_by_windows_keyboard_state():
@@ -283,5 +321,45 @@ def test_component_energy_fractions_are_nonnegative_and_sum_to_one():
         0.5 * np.cos(np.linspace(0, 20, 1000)),
     ])
     fractions = component_energy_fractions(mixing, sources)
+    reconstructed_energies = np.array([
+        np.var(mixing[:, component, None] * sources[component][None, :], axis=1, ddof=1).mean()
+        for component in range(sources.shape[0])
+    ])
+    expected = reconstructed_energies / reconstructed_energies.sum()
     assert np.all(fractions >= 0)
     assert np.isclose(fractions.sum(), 1.0)
+    assert np.allclose(fractions, expected)
+
+
+def test_automatic_component_policy_applies_priority_and_manual_review_veto():
+    table = pd.DataFrame(
+        {
+            "brain": [0.05, 0.05, 0.60, 0.10, 0.30],
+            "muscle artifact": [0.80, 0.05, 0.05, 0.10, 0.20],
+            "eye blink": [0.05] * 5,
+            "heart beat": [0.0] * 5,
+            "line noise": [0.0] * 5,
+            "channel noise": [0.05, 0.70, 0.05, 0.10, 0.20],
+            "variance_contribution_good_samples": [0.001, 0.001, 0.02, 0.003, 0.01],
+        }
+    )
+
+    decisions = automatic_component_decisions(table)
+
+    assert decisions.final_decision.tolist() == [
+        "reject",
+        "unreviewed",
+        "keep",
+        "keep",
+        "unreviewed",
+    ]
+    assert decisions.decision_source.tolist() == [
+        "automatic",
+        "unreviewed",
+        "automatic",
+        "automatic",
+        "unreviewed",
+    ]
+    assert decisions.loc[0, "decision_rule"] == "muscle artifact >= 80%"
+    assert decisions.loc[2, "decision_rule"] == "brain >= 60%"
+    assert decisions.loc[3, "decision_rule"] == "good-sample contribution < 0.4%"

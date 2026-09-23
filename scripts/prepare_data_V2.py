@@ -2,6 +2,8 @@
  
 import sys
 import json
+import re
+import wave
 from pathlib import Path
 
 import mne
@@ -17,6 +19,7 @@ RAW_DATA_PATH = Path(r"D:\SHARED\PhD\data\speech_imagery_recordings")
 OUT_PATH = Path(r"D:\SHARED\PhD\data\spell-it-out\data\spellitout")
 
 PAD = 0.5 #[s]
+DURATION_TOLERANCE_SECONDS = 0.010
 SILENT_CUE_LEAD_IN = 3.0  # seconds;
 
 # Columns used in every BIDS events.tsv file.  The first two columns are
@@ -48,6 +51,29 @@ def _sentence_number_from_code(code, sentence_ids):
 def _stimulus_id_from_code(code):
     """Return the on-disk stimulus ID (for example, 3138 -> sentence-1738)."""
     return f"sentence-{code - 1400:03d}"
+
+
+def _wordlist_syllables(wordlist_table):
+    """Map each stimulus ID to its ordered phonetic-syllable sequence."""
+    required = {"id", "sentence_syll"}
+    missing = required.difference(wordlist_table.columns)
+    if missing:
+        raise ValueError(f"Wordlist lacks required column(s): {', '.join(sorted(missing))}")
+
+    sequences = {}
+    for _, row in wordlist_table.iterrows():
+        stimulus_id = f"sentence-{int(row['id']):03d}"
+        syllables = [
+            token.strip()
+            for token in re.split(r"[.\s]+", str(row["sentence_syll"]).strip())
+            if token.strip()
+        ]
+        if not syllables:
+            raise ValueError(f"No syllables found in wordlist for {stimulus_id}.")
+        if stimulus_id in sequences:
+            raise ValueError(f"Duplicate wordlist stimulus ID: {stimulus_id}.")
+        sequences[stimulus_id] = syllables
+    return sequences
 
 
 def parse_silent_stimulus_events(trigger_events, stimuli_path):
@@ -213,9 +239,11 @@ def process_trigger_events(raw):
 def make_bids_events(trigger_events, word_events, condition):
     """Combine GDF and TextGrid annotations into one BIDS-compliant table."""
     sentences = wordlist.set_index("id")
+    stimulus_syllables = _wordlist_syllables(wordlist)
     trigger_rows = []
     trial_index = 0
     current_stimulus_id = pd.NA
+    cue_counts = {}
 
     # Sort first, because trial and stimulus identity are carried forward.
     triggers = trigger_events.sort_values("onset").reset_index(drop=True)
@@ -241,6 +269,7 @@ def make_bids_events(trigger_events, word_events, condition):
         if code == Event.TRIAL_START:
             trial_index += 1
             current_stimulus_id = pd.NA
+            cue_counts[trial_index] = 0
             event.update(trial_type="trial_start", phase="trial_start",
                          trial_index=trial_index, stimulus_id=current_stimulus_id)
         elif code == Event.FIXATION:
@@ -257,14 +286,49 @@ def make_bids_events(trigger_events, word_events, condition):
         elif code == Event.DOTS:
             event.update(trial_type="rhythm_dots", phase="pre_syllable_production")
         elif code == Event.SYLLABATION:
-            event.update(trial_type="syllable_cue", phase="syllable_production")
+            if pd.isna(current_stimulus_id):
+                raise ValueError(
+                    f"Syllable cue in trial {trial_index} has no preceding sentence stimulus."
+                )
+            syllables = stimulus_syllables.get(str(current_stimulus_id))
+            if syllables is None:
+                raise ValueError(
+                    f"Stimulus {current_stimulus_id!r} is absent from wordlist.tsv."
+                )
+            cue_index = cue_counts.get(trial_index, 0)
+            if cue_index >= len(syllables):
+                raise ValueError(
+                    f"Trial {trial_index} ({current_stimulus_id}) has more syllable cues "
+                    f"than the {len(syllables)} syllables listed in wordlist.tsv."
+                )
+            event.update(
+                trial_type="syllable_cue",
+                phase="syllable_production",
+                stimulus_id=current_stimulus_id,
+                syllable=syllables[cue_index],
+                syllable_index=cue_index + 1,
+                annotation_tier="wordlist_syllable_cue",
+            )
+            cue_counts[trial_index] = cue_index + 1
         elif code == Event.TRIAL_END:
             event.update(trial_type="trial_end", phase="trial_end")
-        else:
-            # Retain unexpected hardware markers without inventing a task label.
-            event.update(trial_type="unclassified_trigger")
-        
         trigger_rows.append(event)
+
+    trial_stimuli = {
+        int(row["trial_index"]): str(row["stimulus_id"])
+        for row in trigger_rows
+        if row["trial_type"] == "sentence_audio" and pd.notna(row["trial_index"])
+    }
+    for trial, cue_count in cue_counts.items():
+        stimulus_id = trial_stimuli.get(trial)
+        if stimulus_id is None:
+            raise ValueError(f"Trial {trial} has no sentence stimulus.")
+        expected = len(stimulus_syllables[stimulus_id])
+        if cue_count != expected:
+            raise ValueError(
+                f"Trial {trial} ({stimulus_id}) has {cue_count} syllable cues but "
+                f"wordlist.tsv contains {expected} syllables."
+            )
 
     trial_stimulus_ids = {
         row["trial_index"]: row["stimulus_id"]
@@ -314,8 +378,8 @@ def events_sidecar():
             "syllable_production": "Observed spoken syllable.",
             "word_listening": "Word timing during listening.", 
             "syllable_listening": "Syllable timing during listening.",
-            "trial_end": "End of a trial.",
-            "unclassified_trigger": "Hardware marker not assigned to a task event."}},
+            "trial_end": "End of a trial."
+            }},
         "trial_index": {"Description": "One-based trial number within the run."},
         "phase": {"Description": "Broader task phase containing the event."},
         "trigger_code": {"Description": "Original numeric GDF trigger code."},
@@ -324,9 +388,9 @@ def events_sidecar():
         "stim_file": {"Description": "Path to the presented stimulus relative to the dataset stimuli/audio directory."},
         "word": {"Description": "Orthographic word token from the TextGrid annotation."},
         "word_index": {"Description": "One-based word position within the trial."},
-        "syllable": {"Description": "Syllable token from the TextGrid annotation."},
+        "syllable": {"Description": "Syllable token from a TextGrid annotation, or from the stimulus wordlist for syllable_cue events."},
         "syllable_index": {"Description": "One-based syllable position within the trial."},
-        "annotation_tier": {"Description": "TextGrid tier/context used for the annotation."},
+        "annotation_tier": {"Description": "TextGrid tier/context, or stimulus-wordlist mapping, used for the annotation."},
     }
 
 def prepare_raw(filepath,subj_id):
@@ -351,8 +415,38 @@ def prepare_raw(filepath,subj_id):
 
     return cropped
 
+
+def check_audio_gdf_duration(
+    raw: mne.io.BaseRaw,
+    audio_path: Path,
+    tolerance_seconds: float = DURATION_TOLERANCE_SECONDS,
+) -> None:
+    """Check that a cropped GDF and its WAV companion have matching duration."""
+    with wave.open(str(audio_path), "rb") as audio:
+        frame_rate = audio.getframerate()
+        if frame_rate <= 0:
+            raise ValueError(f"Invalid audio sampling rate in {audio_path}.")
+        audio_duration = audio.getnframes() / frame_rate
+
+    gdf_duration = raw.n_times / raw.info["sfreq"]
+    difference = abs(gdf_duration - audio_duration)
+    if difference > tolerance_seconds:
+        subject_info = raw.info.get("subject_info") or {}
+        raise ValueError(
+            f"Duration mismatch after crop for {subject_info.get('his_id', 'unknown')}: "
+            f"GDF {gdf_duration:.6f} s vs audio {audio_duration:.6f} s "
+            f"(difference {difference:.6f} s, tolerance {tolerance_seconds:.3f} s; "
+            f"audio: {audio_path})."
+        )
+    print(
+        f"      Duration check: GDF {gdf_duration:.6f} s, audio {audio_duration:.6f} s "
+        f"(difference {difference * 1000:.3f} ms)."
+    )
+
 def process(subj_id, raw_path, annot_path=None, audio_path=None):
     raw = prepare_raw(raw_path,subj_id)
+    if audio_path is not None:
+        check_audio_gdf_duration(raw, audio_path)
     trigger_events = process_trigger_events(raw)
     condition = "overt" if "overt" in raw_path.name.lower() else "silent"
     if condition == "overt":
@@ -388,6 +482,11 @@ if __name__ == "__main__":
     wordlist = SpellItOut('overt', data_path=out_path).get_wordlist()
 
     for subjno, subject in enumerate(subjects):
+
+        TARGET_SUBJECTS = {25}
+        if subjno + 1 not in TARGET_SUBJECTS:
+            continue
+
         # if subjno!=21: continue
         subj_path = recordings_path / subject
         overt_runs = sorted(list(subj_path.rglob("*overt.gdf")))

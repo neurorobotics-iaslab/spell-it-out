@@ -98,6 +98,9 @@ default; add `--exclude-bad-spans` to remove them from both duration and blink
 counting. Stage 6 uses a 150 ms minimum centre-to-centre blink separation by
 default; change it with `--min-blink-separation-ms`. This affects only the
 summary counts, never the reviewed annotation TSVs.
+If `--subjects` is omitted, all numeric `sub-*` directories are discovered
+automatically; subjects or conditions without complete checkpoints emit a
+warning and are skipped.
 
 ## Running ERD/ERS analysis
 

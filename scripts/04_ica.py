@@ -30,6 +30,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--line-noise-method", choices=("notch", "prep"), default="notch")
     parser.add_argument("--line-frequency", type=float, default=50.0)
     parser.add_argument("--max-iter", type=int, default=2000)
+    parser.add_argument(
+        "--w-change",
+        type=float,
+        default=1e-12,
+        help=(
+            "Infomax stopping threshold for the squared change in weights "
+            "(MNE default: 1e-12)."
+        ),
+    )
     parser.add_argument("--random-state", type=int, default=435656)
     parser.add_argument(
         "--rank-tolerance",
@@ -54,6 +63,7 @@ def main(args: argparse.Namespace) -> None:
         line_noise_method=args.line_noise_method,
         line_frequency_hz=args.line_frequency,
         max_iter=args.max_iter,
+        w_change=args.w_change,
         random_state=args.random_state,
         rank_tolerance=args.rank_tolerance,
         max_unmixing_condition=args.max_unmixing_condition,
@@ -105,9 +115,14 @@ def main(args: argparse.Namespace) -> None:
         # Preserve the prepared input before the potentially long optimization.
         input_path = eeg_dir / f"{base}_desc-infomax-input_raw.fif"
         pooled.save(input_path, overwrite=args.overwrite)
-        ica, n_components, rank_estimate, n_fit_samples, unmixing_condition = (
-            fit_extended_infomax(pooled, config)
-        )
+        (
+            ica,
+            n_components,
+            rank_estimate,
+            n_fit_samples,
+            unmixing_condition,
+            convergence,
+        ) = fit_extended_infomax(pooled, config)
         paths = write_infomax_outputs(
             eeg_dir,
             base,
@@ -121,6 +136,7 @@ def main(args: argparse.Namespace) -> None:
             rank_estimate,
             n_fit_samples,
             unmixing_condition,
+            convergence,
             overwrite=args.overwrite,
             write_ica_input=False,
         )

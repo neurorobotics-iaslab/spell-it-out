@@ -48,9 +48,90 @@ class InfomaxConfig:
     line_noise_method: str = "notch"
     line_frequency_hz: float = 50.0
     max_iter: int = 2000
+    w_change: float = 1e-12
     random_state: int = 435656
     rank_tolerance: float = 1e-7
     max_unmixing_condition: float = 1e6
+
+
+class _InfomaxStepCapture(logging.Handler):
+    """Keep the final unrounded Infomax step diagnostic in memory."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self.last: dict[str, int | float] | None = None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if not (
+            isinstance(record.msg, str)
+            and record.msg.startswith("step %d - lrate")
+            and isinstance(record.args, tuple)
+            and len(record.args) == 4
+        ):
+            return
+        step, learning_rate, weight_change, angle = record.args
+        self.last = {
+            "iterations_executed": int(step),
+            "final_learning_rate": float(learning_rate),
+            "final_w_change": float(weight_change),
+            "final_angle_deg": float(angle),
+        }
+
+
+def _infomax_convergence_diagnostics(
+    config: InfomaxConfig,
+    reported_iterations: int,
+    last_step: dict[str, int | float] | None,
+) -> dict[str, Any]:
+    """Interpret MNE Infomax termination without trusting ``n_iter_`` alone."""
+    if last_step is None:
+        return {
+            "iterations_executed": None,
+            "final_learning_rate": None,
+            "final_w_change": None,
+            "final_angle_deg": None,
+            "stopped_before_max_iter": None,
+            "converged": None,
+            "convergence_status": "diagnostics_unavailable",
+            "convergence_note": "No Infomax step diagnostic was captured.",
+        }
+
+    diagnostics = dict(last_step)
+    executed = int(diagnostics["iterations_executed"])
+    final_change = float(diagnostics["final_w_change"])
+    stopped_early = executed < config.max_iter
+    change_met = executed > 2 and final_change < config.w_change
+
+    if stopped_early and reported_iterations == config.max_iter:
+        # MNE assigns step=max_iter when w_change is met, even when the actual
+        # step is much smaller. The captured log retains the real step.
+        status = "w_change"
+        converged = True
+    elif stopped_early:
+        # MNE shortens its local max_iter after enough successive small-angle
+        # updates. w_change may happen to be satisfied on the same final step.
+        status = "small_angle_and_w_change" if change_met else "small_angle"
+        converged = True
+    elif change_met:
+        status = "w_change_at_max_iter"
+        converged = True
+    else:
+        status = "max_iter_reached"
+        converged = False
+
+    diagnostics.update(
+        {
+            "stopped_before_max_iter": stopped_early,
+            "converged": converged,
+            "convergence_status": status,
+            "convergence_note": (
+                "iterations_executed and final optimization values were captured "
+                "from the MNE Infomax step logger before its ambiguous n_iter_ "
+                "conversion."
+            ),
+        }
+    )
+    return diagnostics
 
 
 def _require_review_complete(annotations: pd.DataFrame, channels: pd.DataFrame, run: str) -> None:
@@ -271,11 +352,33 @@ def fit_extended_infomax(raw: mne.io.BaseRaw, config: InfomaxConfig):
     ica = mne.preprocessing.ICA(
         n_components=n_components,
         method="infomax",
-        fit_params={"extended": True},
+        fit_params={
+            "extended": True,
+            "w_change": config.w_change,
+            # Required for MNE to emit the per-step values captured below.
+            "verbose": True,
+        },
         max_iter=config.max_iter,
         random_state=config.random_state,
     )
-    ica.fit(eeg, reject_by_annotation=True, verbose="error")
+    capture = _InfomaxStepCapture()
+    mne_logger = mne.utils.logger
+    existing_handlers = tuple(mne_logger.handlers)
+    previous_handler_levels = {handler: handler.level for handler in existing_handlers}
+    mne_logger.addHandler(capture)
+    for handler in existing_handlers:
+        handler.setLevel(logging.WARNING)
+    try:
+        ica.fit(eeg, reject_by_annotation=True, verbose="info")
+    finally:
+        mne_logger.removeHandler(capture)
+        for handler, level in previous_handler_levels.items():
+            handler.setLevel(level)
+    convergence = _infomax_convergence_diagnostics(
+        config,
+        int(ica.n_iter_),
+        capture.last,
+    )
     singular_values = np.linalg.svd(ica.unmixing_matrix_, compute_uv=False)
     unmixing_rank = np.linalg.matrix_rank(ica.unmixing_matrix_)
     unmixing_condition = float(singular_values[0] / singular_values[-1])
@@ -291,7 +394,14 @@ def fit_extended_infomax(raw: mne.io.BaseRaw, config: InfomaxConfig):
             f"(condition number {unmixing_condition:.3e}; maximum allowed "
             f"{config.max_unmixing_condition:.3e}). No ICA/component outputs were written."
         )
-    return ica, n_components, rank_estimate, n_fit_samples, unmixing_condition
+    return (
+        ica,
+        n_components,
+        rank_estimate,
+        n_fit_samples,
+        unmixing_condition,
+        convergence,
+    )
 
 
 def component_energy_fractions(mixing: np.ndarray, sources: np.ndarray) -> np.ndarray:
@@ -307,14 +417,92 @@ def component_energy_fractions(mixing: np.ndarray, sources: np.ndarray) -> np.nd
         raise ValueError("mixing must be channels x components and sources components x samples")
     if mixing.shape[1] != sources.shape[0]:
         raise ValueError("mixing and sources contain different numbers of components")
-    energies = np.empty(sources.shape[0], dtype=float)
-    for component in range(sources.shape[0]):
-        contribution = mixing[:, component, None] * sources[component][None, :]
-        energies[component] = float(np.var(contribution, axis=1, ddof=1).mean())
+    # For component k, var(a[:, k] * s[k, :]) averaged over channels is
+    # exactly var(s[k, :]) * mean(a[:, k] ** 2). Computing this separable
+    # expression avoids materialising a channels-by-samples reconstruction for
+    # every component.
+    source_variances = np.var(sources, axis=1, ddof=1)
+    mean_squared_mixing = np.mean(np.square(mixing), axis=0)
+    energies = source_variances * mean_squared_mixing
     total = float(energies.sum())
     if not np.isfinite(total) or total <= 0:
         raise RuntimeError("Could not compute positive component energies for ICA output.")
     return energies / total
+
+
+AUTO_BRAIN_THRESHOLD = 0.60
+AUTO_ARTIFACT_THRESHOLD = 0.80
+AUTO_CHANNEL_REVIEW_THRESHOLD = 0.70
+AUTO_CONTRIBUTION_THRESHOLD = 0.004
+AUTO_REJECT_CLASSES = (
+    "muscle artifact",
+    "eye blink",
+    "heart beat",
+    "line noise",
+)
+
+
+def automatic_component_decisions(table: pd.DataFrame) -> pd.DataFrame:
+    """Apply the fixed, reviewer-independent ICA component policy.
+
+    High-confidence artifacts take precedence over automatic keeps. Channel
+    noise above its threshold is deliberately forced to manual review because
+    a globally small contribution can still be large in one channel.
+    """
+    required = {
+        "brain",
+        "channel noise",
+        "variance_contribution_good_samples",
+        *AUTO_REJECT_CLASSES,
+    }
+    missing = sorted(required.difference(table.columns))
+    if missing:
+        raise ValueError(
+            "Cannot apply automatic ICA policy; missing columns: "
+            + ", ".join(missing)
+        )
+    evidence = table[list(required)].apply(pd.to_numeric, errors="coerce")
+    if evidence.isna().any().any():
+        invalid = sorted(evidence.columns[evidence.isna().any()].tolist())
+        raise ValueError(
+            "Cannot apply automatic ICA policy; non-numeric evidence in: "
+            + ", ".join(invalid)
+        )
+
+    artifact_probabilities = evidence[list(AUTO_REJECT_CLASSES)]
+    reject = artifact_probabilities.ge(AUTO_ARTIFACT_THRESHOLD).any(axis=1)
+    force_review = evidence["channel noise"].ge(AUTO_CHANNEL_REVIEW_THRESHOLD)
+    brain_keep = evidence["brain"].ge(AUTO_BRAIN_THRESHOLD)
+    low_contribution_keep = evidence[
+        "variance_contribution_good_samples"
+    ].lt(AUTO_CONTRIBUTION_THRESHOLD)
+    keep = (brain_keep | low_contribution_keep) & ~reject & ~force_review
+
+    result = pd.DataFrame(index=table.index)
+    result["final_decision"] = "unreviewed"
+    result["decision_source"] = "unreviewed"
+    result["decision_rule"] = ""
+    result.loc[reject, ["final_decision", "decision_source"]] = (
+        "reject",
+        "automatic",
+    )
+    for component_index in result.index[reject]:
+        artifact_class = artifact_probabilities.loc[component_index].idxmax()
+        result.loc[component_index, "decision_rule"] = (
+            f"{artifact_class} >= {AUTO_ARTIFACT_THRESHOLD:.0%}"
+        )
+    result.loc[keep, ["final_decision", "decision_source"]] = (
+        "keep",
+        "automatic",
+    )
+    result.loc[keep & brain_keep, "decision_rule"] = (
+        f"brain >= {AUTO_BRAIN_THRESHOLD:.0%}"
+    )
+    result.loc[keep & ~brain_keep & low_contribution_keep, "decision_rule"] = (
+        "good-sample contribution < "
+        f"{AUTO_CONTRIBUTION_THRESHOLD:.1%}"
+    )
+    return result
 
 
 def component_review_table(raw: mne.io.BaseRaw, ica: mne.preprocessing.ICA) -> pd.DataFrame:
@@ -331,13 +519,23 @@ def component_review_table(raw: mne.io.BaseRaw, ica: mne.preprocessing.ICA) -> p
     labels = pd.DataFrame(probabilities, columns=ICLABEL_CLASSES)
     labels.insert(0, "component", np.arange(len(labels)))
     eeg = raw.copy().pick("eeg")
-    # sources = ica.get_sources(eeg).get_data(reject_by_annotation="omit")
-    sources = ica.get_sources(eeg).get_data()
-    contributions = component_energy_fractions(ica.get_components(), sources)
+    source_raw = ica.get_sources(eeg)
+    contributions = component_energy_fractions(
+        ica.get_components(), source_raw.get_data()
+    )
+    good_sample_contributions = component_energy_fractions(
+        ica.get_components(),
+        source_raw.get_data(reject_by_annotation="omit"),
+    )
     labels.insert(
         1,
         "variance_contribution",
         contributions,
+    )
+    labels.insert(
+        2,
+        "variance_contribution_good_samples",
+        good_sample_contributions,
     )
     labels["predicted_label"] = labels[list(ICLABEL_CLASSES)].idxmax(axis=1)
     labels["predicted_probability"] = labels.apply(
@@ -345,6 +543,8 @@ def component_review_table(raw: mne.io.BaseRaw, ica: mne.preprocessing.ICA) -> p
     )
     labels["manual_decision"] = "unreviewed"
     labels["final_decision"] = "unreviewed"
+    labels["decision_source"] = "unreviewed"
+    labels["decision_rule"] = ""
     labels["reviewer"] = ""
     labels["reviewed_at"] = ""
     labels["review_notes"] = ""
@@ -419,6 +619,7 @@ def write_infomax_outputs(
     rank_estimate: int,
     n_fit_samples: int,
     unmixing_condition: float,
+    convergence: dict[str, Any],
     overwrite: bool,
     write_ica_input: bool = True,
 ) -> dict[str, Path]:
@@ -466,6 +667,7 @@ def write_infomax_outputs(
             "mne_rank_estimate": rank_estimate,
             "n_fit_samples": n_fit_samples,
             "n_iterations": int(ica.n_iter_),
+            **convergence,
             "unmixing_condition": unmixing_condition,
         },
     }

@@ -16,13 +16,14 @@ from spellitout.erd_ers import (
     write_subject_tfr_outputs,
 )
 from spellitout.preprocessing import register_derivative_description
-from spellitout.utils import get_subject_id
+from spellitout.utils import get_run_id, get_subject_id
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--condition", choices=("overt", "silent"), required=True)
     parser.add_argument("--subjects", type=int, nargs="+", required=True)
+    parser.add_argument("--runs", type=int, nargs="+", default=(1, 2, 3))
     parser.add_argument("--derivatives-path", type=Path, default=Path("derivatives/preprocessing"))
     parser.add_argument("--output-path", type=Path, default=Path("derivatives/erders"))
     parser.add_argument("--input-stage", choices=("ica_input", "cleaned"), default="ica_input")
@@ -59,22 +60,28 @@ def main(args: argparse.Namespace) -> None:
         subject = get_subject_id(number)
         eeg_dir = args.derivatives_path / subject / "ses-01" / "eeg"
         base = f"{subject}_ses-01_task-{args.condition}"
-        input_path = eeg_dir / f"{base}_desc-infomax-input_raw.fif"
-        ica_path = eeg_dir / f"{base}_desc-infomax_ica.fif"
-        components_path = eeg_dir / f"{base}_desc-infomax_components.tsv"
-        if not input_path.exists():
-            raise FileNotFoundError(f"Missing Infomax input: {input_path}")
+        if args.input_stage == "cleaned":
+            input_paths = [
+                eeg_dir
+                / f"{get_run_id(subject, args.condition, run_number)}_desc-infomax-cleaned_raw.fif"
+                for run_number in args.runs
+            ]
+        else:
+            input_paths = [eeg_dir / f"{base}_desc-infomax-input_raw.fif"]
+        missing_inputs = [path for path in input_paths if not path.exists()]
+        if missing_inputs:
+            raise FileNotFoundError(
+                f"Missing {args.input_stage} ERD/ERS input(s): "
+                + ", ".join(str(path) for path in missing_inputs)
+            )
         paths = subject_tfr_paths(args.output_path, subject, args.condition)
-        cache_matches = not args.overwrite and subject_checkpoint_matches(paths, config, input_path)
+        cache_matches = not args.overwrite and subject_checkpoint_matches(
+            paths, config, input_paths
+        )
         if cache_matches:
             logger.info("Reusing subject TFR checkpoint for %s.", subject)
             continue
-        raw = load_condition_input(
-            input_path,
-            args.input_stage,
-            ica_path=ica_path if args.input_stage == "cleaned" else None,
-            components_path=components_path if args.input_stage == "cleaned" else None,
-        )
+        raw = load_condition_input(input_paths, args.input_stage)
         if args.resample_sfreq and raw.info["sfreq"] != args.resample_sfreq:
             raw.resample(args.resample_sfreq, verbose="error")
         tfr, report = compute_subject_tfr(raw, config, logger)
@@ -86,7 +93,7 @@ def main(args: argparse.Namespace) -> None:
             report,
             annotations_table(raw),
             config,
-            input_path,
+            input_paths,
             args.overwrite or any(path.exists() for path in paths.values()),
         )
         logger.info("Saved subject TFR checkpoint: %s", paths["tfr"])

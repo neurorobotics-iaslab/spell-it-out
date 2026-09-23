@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 import json
 import logging
 from pathlib import Path
+from collections.abc import Sequence
 
 import mne
 import numpy as np
@@ -18,13 +19,21 @@ ERD_BANDS = {
     "High Beta": (16.0, 30.0),
     "Low Gamma": (30.0, 45.0),
 }
+# TRIAL_WINDOWS = {
+#     "Listening": (-6.5, -3.5),
+#     # "Baseline": (-3.0, -0.1),
+#     "Sentence rep.": (1.0, 4.0),
+#     "Rep. end": (6.0, 7.0),
+#     "Dots": (7.0, 8.8),
+#     "Syllable rep.": (8.8, 20.8),
+# }
 TRIAL_WINDOWS = {
-    "Listening": (-6.5, -3.5),
-    "Baseline": (-3.0, -0.1),
-    "Sentence repetition": (1.0, 4.0),
-    "Repetition end": (6.0, 7.0),
-    "Dots": (7.0, 8.8),
-    "Syllable repetition": (8.8, 20.8),
+    "LISTEN": (-6.5, -3.5),
+    # "Baseline": (-3.0, -0.1),
+    "REP": (1.0, 4.0),
+    "REP": (6.0, 7.0),
+    "DOTS": (7.0, 8.8),
+    "SYLL.": (8.8, 20.8),
 }
 
 
@@ -32,7 +41,7 @@ TRIAL_WINDOWS = {
 class ERDERSConfig:
     """Reproducible choices for the full-trial ERD/ERS analysis."""
 
-    input_stage: str = "amica_input"
+    input_stage: str = "ica_input"
     event_name: str = "repetition_cue"
     tmin: float = -10.0
     tmax: float =  21.2
@@ -125,37 +134,25 @@ def annotations_table(raw: mne.io.BaseRaw) -> pd.DataFrame:
     )
 
 
-def _apply_ica_decisions(raw: mne.io.BaseRaw, ica_path: Path, components_path: Path) -> mne.io.BaseRaw:
-    ica = mne.preprocessing.read_ica(ica_path, verbose="error")
-    table = pd.read_csv(components_path, sep="\t")
-    if "final_decision" not in table:
-        raise ValueError(f"ICA table lacks final_decision: {components_path}")
-    unreviewed = table.index[table["final_decision"] == "unreviewed"].tolist()
-    if unreviewed:
-        raise RuntimeError(
-            f"Cannot use cleaned input: {len(unreviewed)} ICA component decisions remain unreviewed."
-        )
-    ica.exclude = table.index[table["final_decision"] == "reject"].tolist()
-    cleaned = raw.copy().load_data()
-    ica.apply(cleaned, verbose="error")
-    return cleaned
-
-
 def load_condition_input(
-    path: Path,
+    paths: Path | Sequence[Path],
     input_stage: str,
-    ica_path: Path | None = None,
-    components_path: Path | None = None,
 ) -> mne.io.BaseRaw:
-    """Load ica input or apply reviewed ICA decisions in memory."""
-    raw = mne.io.read_raw_fif(path, preload=True, verbose="error")
+    """Load a condition-level input or concatenate cleaned run-level inputs."""
+    input_paths = [paths] if isinstance(paths, Path) else list(paths)
+    if not input_paths:
+        raise ValueError("At least one ERD/ERS input path is required.")
     if input_stage == "ica_input":
-        return raw
+        if len(input_paths) != 1:
+            raise ValueError("ica_input requires exactly one condition-level raw path.")
+        return mne.io.read_raw_fif(input_paths[0], preload=True, verbose="error")
     if input_stage != "cleaned":
         raise ValueError("input_stage must be 'ica_input' or 'cleaned'.")
-    if ica_path is None or components_path is None:
-        raise ValueError("cleaned input requires an ICA FIF and component TSV.")
-    return _apply_ica_decisions(raw, ica_path, components_path)
+    runs = [
+        mne.io.read_raw_fif(path, preload=True, verbose="error")
+        for path in input_paths
+    ]
+    return mne.concatenate_raws(runs)
 
 
 def compute_subject_tfr(
@@ -226,17 +223,19 @@ def subject_tfr_paths(output_root: Path, subject: str, condition: str) -> dict[s
 def subject_checkpoint_matches(
     paths: dict[str, Path],
     config: ERDERSConfig,
-    input_path: Path,
+    input_paths: Path | Sequence[Path],
 ) -> bool:
     """Return whether an existing subject checkpoint matches its calculation input."""
     if not all(path.exists() for path in paths.values()):
         return False
     metadata = json.loads(paths["metadata"].read_text(encoding="utf-8"))
     configuration = json.loads(json.dumps(asdict(config)))
+    source_paths = [input_paths] if isinstance(input_paths, Path) else list(input_paths)
     return (
         metadata.get("configuration") == configuration
-        and metadata.get("input_mtime_ns") == input_path.stat().st_mtime_ns
-        and metadata.get("input_path") == str(input_path)
+        and metadata.get("input_paths") == [str(path) for path in source_paths]
+        and metadata.get("input_mtimes_ns")
+        == [path.stat().st_mtime_ns for path in source_paths]
     )
 
 
@@ -248,7 +247,7 @@ def write_subject_tfr_outputs(
     epoch_report: pd.DataFrame,
     annotations: pd.DataFrame,
     config: ERDERSConfig,
-    input_path: Path,
+    input_paths: Path | Sequence[Path],
     overwrite: bool,
 ) -> dict[str, Path]:
     paths = subject_tfr_paths(output_dir, subject, condition)
@@ -258,13 +257,14 @@ def write_subject_tfr_outputs(
     mne.time_frequency.write_tfrs(paths["tfr"], [tfr], overwrite=overwrite)
     epoch_report.to_csv(paths["epochs"], sep="\t", index=False)
     annotations.to_csv(paths["annotations"], sep="\t", index=False)
+    source_paths = [input_paths] if isinstance(input_paths, Path) else list(input_paths)
     metadata = {
-        "schema_version": 2,
+        "schema_version": 3,
         "subject": subject,
         "condition": condition,
         "input_stage": config.input_stage,
-        "input_path": str(input_path),
-        "input_mtime_ns": input_path.stat().st_mtime_ns,
+        "input_paths": [str(path) for path in source_paths],
+        "input_mtimes_ns": [path.stat().st_mtime_ns for path in source_paths],
         "configuration": asdict(config),
         "bands_hz": ERD_BANDS,
         "plot_windows_s": TRIAL_WINDOWS,

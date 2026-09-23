@@ -36,6 +36,8 @@ class Event:
     SYLLABATION = 781
     TRIAL_END = 897
 
+DEFAULT_DATA_PATH = os.environ.get('MNE_DATASETS_SPELLITOUT_DATA_PATH', None)
+
 class SpellItOut:
     def __init__(self, 
                  condition, 
@@ -77,11 +79,20 @@ class SpellItOut:
                 out[subject_id][f'run-{run}'] = (raw, events_df)
             
         return out
+
+    @property
+    def wordlist(self):
+        return SpellItOut.get_wordlist(self.data_path)
     
-    def get_wordlist(self):
-        sentences_df = pd.read_csv(self.data_path / "stimuli" / "wordlist.tsv", sep='\t', names=['id','sentence','sentence_syll'])
-        return sentences_df
-    
+    @staticmethod
+    def get_wordlist(data_path: str|Path = None) -> pd.DataFrame:
+        if data_path is None:
+            data_path = DEFAULT_DATA_PATH
+            if data_path is None:
+                raise ValueError("Data path not provided and MNE_DATASETS_SPELLITOUT_DATA_PATH environment variable not set.")
+        data_path = Path(data_path)
+        return pd.read_csv(data_path / "stimuli" / "wordlist.tsv", sep='\t', names=['id','sentence','sentence_syll'])
+
     def download(self):
         """
         Downloads the Spell-IT-OUT dataset from the specified URL and extracts it to the data_path.
