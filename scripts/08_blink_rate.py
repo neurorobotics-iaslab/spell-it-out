@@ -1,4 +1,4 @@
-"""Compute reviewed spontaneous blink rates by task, run, and phase."""
+"""Compute reviewed spontaneous blink rates by task, run, and canonical phase."""
 
 from __future__ import annotations
 
@@ -8,13 +8,21 @@ from pathlib import Path
 
 import pandas as pd
 
-from spellitout.blink_rate import BLINKRATE_COLUMNS, run_blink_rate_rows, write_blinkrate_sidecar
+from spellitout.blink_rate import (
+    BLINKRATE_COLUMNS,
+    PHASES,
+    run_blink_rate_rows,
+    write_blinkrate_sidecar,
+)
 from spellitout.preprocessing import ensure_derivative_scaffold
 from spellitout.review_qc import discover_review_records
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=f"Output phases: {', '.join(PHASES)}.",
+    )
     parser.add_argument("--conditions", nargs="+", choices=("silent", "overt"), default=("silent", "overt"))
     parser.add_argument(
         "--subjects",

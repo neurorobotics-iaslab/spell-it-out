@@ -13,7 +13,7 @@ import pandas as pd
 from .review_qc import ReviewRecord, read_review_tables
 
 
-PHASES = ("run", "listening", "sentence_repetition", "syllabation")
+PHASES = ("run", "sentence_listening", "sentence_repetition", "syllabification")
 _LABEL_RE = re.compile(r"(?P<key>sub|ses|task|run)-(?P<value>[^_]+)")
 
 
@@ -39,7 +39,7 @@ def _event_intervals(raw: mne.io.BaseRaw, description: str) -> list[tuple[float,
     return intervals
 
 
-def _syllabation_intervals(
+def _syllabification_intervals(
     raw: mne.io.BaseRaw,
     merge_gap_seconds: float = 1.0,
 ) -> tuple[list[tuple[float, float]], int]:
@@ -51,7 +51,7 @@ def _syllabation_intervals(
             raw.annotations.duration,
             raw.annotations.description,
         )
-        if str(label) == "syllable_cue"
+        if str(label) == "syllabification_cue"
     )
     if not events:
         return [], 0
@@ -68,13 +68,13 @@ def _syllabation_intervals(
 
 
 def phase_intervals(raw: mne.io.BaseRaw) -> tuple[dict[str, list[tuple[float, float]]], int]:
-    syllabation, n_syllable_cues = _syllabation_intervals(raw)
+    syllabification, n_syllabification_cues = _syllabification_intervals(raw)
     return {
         "run": [(0.0, float(raw.times[-1]))],
-        "listening": _event_intervals(raw, "sentence_audio"),
+        "sentence_listening": _event_intervals(raw, "listening_cue"),
         "sentence_repetition": _event_intervals(raw, "repetition_cue"),
-        "syllabation": syllabation,
-    }, n_syllable_cues
+        "syllabification": syllabification,
+    }, n_syllabification_cues
 
 
 def subtract_intervals(
@@ -140,7 +140,7 @@ def run_blink_rate_rows(
     entities = _record_entities(record)
     raw = mne.io.read_raw_fif(record.raw_path, preload=False, verbose="error")
     annotations, _ = read_review_tables(record)
-    intervals_by_phase, n_syllable_cues = phase_intervals(raw)
+    intervals_by_phase, n_syllabification_cues = phase_intervals(raw)
     blink_centres, n_unreviewed, n_dismissed = _reviewed_blinks(annotations)
     blink_centres, n_suppressed = enforce_minimum_blink_separation(
         blink_centres,
@@ -182,7 +182,9 @@ def run_blink_rate_rows(
                     blink_count / valid_duration * 60.0 if valid_duration > 0 else np.nan
                 ),
                 "n_intervals": len(intervals),
-                "n_syllable_cues": n_syllable_cues if phase == "syllabation" else 0,
+                "n_syllabification_cues": (
+                    n_syllabification_cues if phase == "syllabification" else 0
+                ),
                 "review_complete": n_unreviewed == 0,
                 "n_unreviewed_blinks": n_unreviewed,
                 "n_dismissed_blinks": n_dismissed,
@@ -197,7 +199,7 @@ def run_blink_rate_rows(
 BLINKRATE_COLUMNS = (
     "subject", "session", "task", "run", "phase", "phase_duration_s",
     "valid_duration_s", "blink_count", "blink_rate_per_min", "n_intervals",
-    "n_syllable_cues", "review_complete", "n_unreviewed_blinks",
+    "n_syllabification_cues", "review_complete", "n_unreviewed_blinks",
     "n_dismissed_blinks", "bad_spans_excluded",
     "n_blinks_suppressed_min_separation", "minimum_blink_separation_s",
 )
@@ -210,13 +212,17 @@ def write_blinkrate_sidecar(output_root: Path) -> Path:
         "Description": "Reviewed spontaneous eye-blink counts and rates by run and task phase.",
         "blink_count": "Number of reviewed BLINK annotation centres within the phase.",
         "blink_rate_per_min": "blink_count divided by valid_duration_s, multiplied by 60.",
+        "n_syllabification_cues": (
+            "Number of syllabification_cue events contributing to the "
+            "syllabification phase; zero for all other phases."
+        ),
         "review_complete": "False when one or more BLINK annotations in the run remain unreviewed.",
         "bad_spans_excluded": "Whether approved BAD_* spans were removed from duration and blink counting.",
         "PhaseDefinitions": {
             "run": "Complete run interval.",
-            "listening": "Each sentence_audio interval, aggregated per run.",
+            "sentence_listening": "Each listening_cue interval, aggregated per run.",
             "sentence_repetition": "Each repetition_cue interval, aggregated per run.",
-            "syllabation": "Each consecutive syllable_cue block, aggregated per run.",
+            "syllabification": "Each consecutive syllabification_cue block, aggregated per run.",
         },
         "CountRule": "BLINK annotations with review_status keep or unreviewed are counted; dismissed annotations are excluded.",
         "MinimumBlinkSeparation": "Events with centres closer than the configured minimum separation are counted once; source annotations are not modified.",

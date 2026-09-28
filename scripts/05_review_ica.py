@@ -33,7 +33,7 @@ PHASE_STYLES = {
     "listening": ("Listening", "tab:blue"),
     "repetition": ("Repetition", "tab:green"),
     "dots": ("Dots", "tab:orange"),
-    "syllabation": ("Syllabation", "tab:purple"),
+    "syllabification": ("Syllabification", "tab:purple"),
 }
 
 
@@ -131,10 +131,12 @@ class ICAReviewApplication:
         self.overview_window = None
         phases, _ = phase_intervals(self.raw)
         self.phase_intervals = {
-            "listening": phases["listening"],
+            "listening": phases["sentence_listening"],
             "repetition": phases["sentence_repetition"],
-            "dots": merged_annotation_intervals(self.raw, "rhythm_dots"),
-            "syllabation": phases["syllabation"],
+            "dots": merged_annotation_intervals(
+                self.raw, "pre_syllabification_dot"
+            ),
+            "syllabification": phases["syllabification"],
         }
         self.phase_artists = []
         self.psd_frequencies, self.component_psd = self._precompute_psd()
@@ -369,7 +371,7 @@ class ICAReviewApplication:
     def _precompute_evokeds(self) -> None:
         """Epoch and average each event once for all components during loading."""
         windows = {
-            "syllable_cue": ((0.0, 0.6), None),
+            "syllabification_cue": ((0.0, 0.6), None),
             "repetition_cue": ((-4.0, 13.0), (-3.0, 0.0)),
         }
         descriptions = set(self.sources.annotations.description)
@@ -694,7 +696,7 @@ class ICAReviewApplication:
             ("listening", epoch_start, 0.0),
             ("repetition", 0.0, 5.0),
             ("dots", 7.0, 8.8),
-            ("syllabation", 8.8, epoch_stop),
+            ("syllabification", 8.8, epoch_stop),
         )
         for phase, phase_start, phase_stop in phases:
             visible_start = max(epoch_start, phase_start)
@@ -812,7 +814,11 @@ class ICAReviewApplication:
             self.trace_line = None
             self.overview_window = None
             try:
-                event_name = "repetition_cue" if trace_view == "evoked_trial" else "syllable_cue"
+                event_name = (
+                    "repetition_cue"
+                    if trace_view == "evoked_trial"
+                    else "syllabification_cue"
+                )
                 (
                     epoch_times,
                     evoked,
