@@ -1,7 +1,6 @@
 import numpy as np
 from mne.channels import make_dig_montage, make_standard_montage
 from mne.io import RawArray
-import mne
 
 def get_subject_id(subject_id):
     """
@@ -122,18 +121,3 @@ def epoch_data(data, events, epoch, sfreq):
     times = np.arange(offset_start, offset_end) / sfreq
     return np.array(epoched), times
 
-def make_annotations_from_events(events_df, ev_col = 'trial_type'):
-    """
-    Creates MNE Annotations from a DataFrame of events.
-    Args:
-        raw (mne.io.Raw): MNE Raw object to which annotations will be added.
-        events_df (pd.DataFrame): DataFrame containing event information with columns 'onset', 'duration', and event type.
-        ev_col (str): Column name in events_df that contains the event type information. Default is 'trial_type'.
-    """
-    annotations = mne.Annotations(onset=[], duration=[], description=[])
-    for _, row in events_df.iterrows():
-        onset = row['onset']
-        duration = row['duration']
-        description = row[ev_col]
-        annotations.append(onset=onset, duration=duration, description=description)
-    return annotations

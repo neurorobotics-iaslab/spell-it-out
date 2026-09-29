@@ -1,167 +1,234 @@
 # Preprocessing workflow
 
-The preprocessing derivative is deliberately staged. Each stage has an
-inspectable output and must not silently make the next stage's scientific
-decision.
+The preprocessing pipeline consumes the canonical Spell-IT-OUT BIDS dataset
+and writes BIDS-like derivatives below `derivatives/`. Raw BIDS files are never
+modified.
 
-1. `01_preprocess` is run independently for each recording run. It creates a
-   continuous derivative with channel exclusions, resampling, EEG/EOG filtering, and
-   non-BAD QC candidates (`BLINK`, `MUSCLE_CANDIDATE`,
-   `AMPLITUDE_CANDIDATE`). It never rereferences, interpolates channels, or
-   applies ICA.
-2. `02_channel_qc` creates the per-run PREP evidence columns in the editable
-   channel-QC table. It never interpolates channels.
-3. `03_review_qc` is the human review gate. It updates only
-   `desc-qc_annotations.tsv` and `desc-channelqc.tsv`: global artifact candidates
-   can be approved or dismissed, and every channel receives a per-run decision.
-4. `04_amica` or `04_ica` calculates the approved condition-level bad-channel union,
-   interpolates that same set in every run, applies line-noise removal and the
-   final common average reference, saves the concatenated ICA input, and fits
-   AMICA or Extended Infomax in one invocation.
-5. `05_review_ica` reviews either decomposition and records manual decisions;
-   applying selected components remains a later explicit operation.
-6. `06_blink_rate` summarizes reviewed spontaneous blink counts and rates for
-   each run and task phase in one subject-level BIDS TSV.
-7. `07_erd_ers` computes and saves all full-trial epoch TFRs per subject,
-   including BAD-span evidence; paper figures are made separately from those
-   checkpoints.
+The stages deliberately separate automatic evidence, human decisions, ICA
+fitting, and component application:
 
-The source raw dataset is immutable. Each derivative sidecar records source
-identity, configuration, and decisions required to reproduce the next stage.
+1. `01_preprocess.py` creates one minimally processed FIF per run and an
+   editable artifact-candidate table.
+2. `02_channel_qc.py` calculates PREP channel-quality evidence without
+   interpolating channels.
+3. `03_review_qc.py` is the run-level human review gate for artifacts and
+   channels.
+4. `04_ica.py` harmonizes reviewed channels across runs, creates the
+   condition-level ICA input, and fits Extended Infomax.
+5. `05_review_ica.py` reviews ICLabel evidence and component decisions.
+6. `06_apply_ica.py` applies the completed component decisions and restores
+   separate cleaned run-level FIF files.
+7. `07_erd_ers.py` creates subject-level epoch/TFR checkpoints.
+8. `08_blink_rate.py` calculates reviewed blink-rate summaries.
 
-## Running stage 1
+Stages 1–6 form the preprocessing sequence. Stages 7 and 8 are downstream
+analyses; blink-rate calculation depends on the run-level review but does not
+require ICA application.
+
+## Input dataset
+
+The input must be the unified BIDS root containing both `task-overt` and
+`task-silent` recordings:
+
+```text
+dataset_description.json
+task-overt_eeg.json
+task-silent_eeg.json
+channels.tsv
+sub-01/
+  ses-01/
+    eeg/
+      sub-01_ses-01_task-overt_run-01_eeg.vhdr
+      sub-01_ses-01_task-overt_run-01_events.tsv
+      ...
+```
+
+Pass the root with `--data-path`, or set
+`MNE_DATASETS_SPELLITOUT_DATA_PATH`. The package uses MNE-BIDS to resolve raw
+recordings, inherited metadata, channel types, and event annotations.
+
+The raw dataset can be checked independently with:
+
+```bash
+python scripts/00_validate_bids.py data/spellitout_bids
+```
+
+## Stage 1: minimal run-level preprocessing
 
 ```bash
 python scripts/01_preprocess.py \
   --condition silent \
   --subjects 1 \
-  --data-path /path/to/dataset \
+  --runs 1 2 3 \
+  --data-path data/spellitout_bids \
   --overwrite
 ```
 
-The default output root is `derivatives/preprocessing`. Automatic artifact
-detections are candidates, not exclusions. Do not approve blinks as `BAD_*`;
-they should remain available for ICA to learn ocular components.
-Automatic muscle candidates separated by at most 100 ms are merged, and spans
-shorter than 100 ms after merging are discarded before the review table is
-written.
+For each run, Stage 1:
 
-To update checkpoints generated before EOG filtering was included, first run a
-dry run, then explicitly replace only the affected minproc FIFs:
+- drops the configured permanently excluded channels (`AF7` and `AF8` by
+  default);
+- applies the configured EEG/EOG band-pass filter;
+- resamples to 512 Hz by default;
+- detects blink, muscle, and optional high-amplitude candidates;
+- writes `desc-minproc_raw.fif` and `desc-qc_annotations.tsv`.
 
-```bash
-python scripts/01_filter_existing_eog.py
-python scripts/01_filter_existing_eog.py --overwrite
-```
+Candidate annotations are evidence, not exclusions. Blinks remain available
+for ICA. Nearby muscle candidates are merged and spans shorter than the
+configured minimum duration are discarded before the table is written.
 
-The migration uses the Stage 1 1--100 Hz band-pass by default; set `--l-freq`
-and `--h-freq` to match a non-default original Stage 1 invocation.
-
-## Running stage 2
+## Stage 2: channel-quality evidence
 
 ```bash
-python scripts/02_channel_qc.py --condition silent --subjects 1 --overwrite
+python scripts/02_channel_qc.py \
+  --condition silent \
+  --subjects 1 \
+  --runs 1 2 3 \
+  --overwrite
 ```
 
-This writes `desc-channelqc.tsv`, which holds the PREP detector evidence,
-PSD/correlation margins, and the reviewer’s final channel decision. It
-intentionally does not write a repaired EEG file.
+Stage 2 runs PREP channel detectors on each minimally processed run and writes
+`desc-channelqc.tsv`. RANSAC is enabled by default and can be disabled with
+`--no-ransac`. This stage records detector evidence and margins but never
+interpolates or removes channels from the saved FIF.
 
-## Running stage 3
+## Stage 3: run-level review
 
 ```bash
-python scripts/03_review_qc.py --condition silent --subjects 1
+python scripts/03_review_qc.py \
+  --condition silent \
+  --subjects 1 \
+  --reviewer Tommaso
 ```
 
-The Tk review application autosaves changes to the two canonical TSVs. It does
-not modify the minimally processed raw FIF.
+The Tk application edits only the two canonical review tables:
 
-Its display-only controls can apply high-pass, low-pass, notch, and average
-reference operations to a temporary in-memory copy for visual inspection. They
-never alter the saved FIF, review TSVs, PREP evidence, or later ICA input.
+- `desc-qc_annotations.tsv` for artifact candidates and approved `BAD_*`
+  spans;
+- `desc-channelqc.tsv` for per-run channel decisions.
 
-## Running blink-rate summaries
+Display filters and rereferencing in the GUI operate on an in-memory copy and
+never change the saved signal. Every annotation and EEG-channel decision must
+be complete before Stage 4.
+
+## Stage 4: Extended Infomax
 
 ```bash
-python scripts/06_blink_rate.py \
-  --conditions silent overt \
-  --subjects 1 2 3
+python scripts/04_ica.py \
+  --condition silent \
+  --subjects 1 \
+  --runs 1 2 3 \
+  --overwrite
 ```
 
-The output is written under `derivatives/blinkrate`, with one TSV per
-subject/session containing all tasks, runs, and the `run`, `listening`,
-`sentence_repetition`, and `syllabation` rows. Blink annotations marked
-`keep` and still `unreviewed` are counted; dismissed annotations are excluded.
-The `review_complete` column identifies runs that still contain unreviewed
-blink annotations. Approved `BAD_*` spans are retained in the denominator by
-default; add `--exclude-bad-spans` to remove them from both duration and blink
-counting. Stage 6 uses a 150 ms minimum centre-to-centre blink separation by
-default; change it with `--min-blink-separation-ms`. This affects only the
-summary counts, never the reviewed annotation TSVs.
-If `--subjects` is omitted, all numeric `sub-*` directories are discovered
-automatically; subjects or conditions without complete checkpoints emit a
-warning and are skipped.
+Stage 4:
 
-## Running ERD/ERS analysis
+- builds the union of reviewed interpolation/exclusion decisions across the
+  selected runs;
+- applies the same sensor geometry to every run;
+- removes line noise with a notch filter by default, or PREP when requested
+  with `--line-noise-method prep`;
+- interpolates reviewed bad channels and removes channels explicitly marked
+  `exclude_from_ica`;
+- applies the average EEG reference;
+- concatenates the runs and retains technical boundary annotations;
+- omits approved `BAD_*` samples only while fitting Extended Infomax;
+- estimates the effective rank and limits the component count accordingly;
+- calculates ICLabel probabilities and sensor-space component contributions.
+
+The main outputs are:
+
+```text
+desc-infomax-input_raw.fif
+desc-infomax-input_channels.tsv
+desc-infomax_ica.fif
+desc-infomax_components.tsv
+desc-infomax.json
+```
+
+The condition-level input checkpoint is saved before the potentially long ICA
+fit. The metadata JSON records rank, convergence diagnostics, fit sample count,
+condition number, configuration, and channel harmonization decisions.
+
+## Stage 5: component review
+
+```bash
+python scripts/05_review_ica.py \
+  --condition silent \
+  --subject 1 \
+  --reviewer Tommaso
+```
+
+The GUI displays the component topography, full-recording PSD, continuous or
+event-averaged activity, ICLabel probabilities, and variance contribution.
+The optional fixed automatic policy can initialize decisions; remaining
+components must be reviewed manually. Decisions are saved in
+`desc-infomax_components.tsv`. The ICA input and fitted decomposition are not
+modified.
+
+## Stage 6: apply reviewed ICA decisions
+
+```bash
+python scripts/06_apply_ica.py \
+  --condition silent \
+  --subjects 1 \
+  --runs 1 2 3 \
+  --overwrite
+```
+
+Stage 6 requires every component to be marked `keep` or `reject`. It applies
+the rejected-component list to the concatenated input, splits the result at
+the technical run boundaries, and writes:
+
+```text
+sub-*_ses-01_task-*_run-*_desc-infomax-cleaned_raw.fif
+```
+
+## Stage 7: ERD/ERS checkpoints
+
+Use the reviewed ICA input directly:
 
 ```bash
 python scripts/07_erd_ers.py \
   --condition silent \
   --subjects 1 2 3 \
-  --input-stage amica_input \
+  --input-stage ica_input \
   --overwrite
 ```
 
-Stage 7 epochs `repetition_cue` from -10 to 25 seconds, resamples to 128 Hz,
-computes Morlet TFRs from 2 to 60 Hz, and applies CSD by default. It retains every full-length epoch,
-including epochs that overlap `BAD_*` spans. Each subject checkpoint contains an
-epoch-level TFR, an epoch table with the unioned BAD-overlap duration, and a TSV
-copy of all source annotations. Events at recording boundaries are retained in
-the epoch table with `tfr_available=False` and `TOO_SHORT` rather than silently
-discarded.
-
-The default `amica_input` mode is useful before ICA review is complete. After
-all component decisions are available, use `--input-stage cleaned`; this mode
-applies only components marked `reject` in memory and does not create a fake
-cleaned FIF.
-
-Create the paper figure separately, choosing the BAD-overlap criterion at plot
-time:
+Or use the run-level ICA-cleaned outputs from Stage 6:
 
 ```bash
-python per_paper/plot_erd_ers.py \
+python scripts/07_erd_ers.py \
   --condition silent \
   --subjects 1 2 3 \
-  --max-bad-duration 0.5 \
-  --vlim-db none
+  --input-stage cleaned \
+  --overwrite
 ```
 
-The plotter selects eligible epochs, averages within each subject, applies the
--3 to -0.1 second baseline as a dB log-ratio, then averages subjects equally.
+The stage epochs `repetition_cue`, resamples to 128 Hz by default, computes
+Morlet TFRs, and applies CSD unless `--no-csd` is passed. Full-length epochs
+are retained even when they overlap `BAD_*` spans; overlap evidence is stored
+for selection during later analysis.
 
-## Running stage 4
+## Stage 8: blink-rate summaries
 
 ```bash
-python scripts/04_amica.py --condition silent --subjects 1 --device cuda
-
-# Extended Infomax alternative
-python scripts/04_ica.py --condition silent --subjects 1
+python scripts/08_blink_rate.py \
+  --conditions silent overt \
+  --subjects 1 2 3
 ```
 
-All selected runs must have completed annotation and EEG-channel decisions.
-The default line-noise method is a 50 Hz notch; use `--line-noise-method prep`
-to use only PREP's line-noise procedure instead. The script writes the
-condition-level ICA-input checkpoint before starting the fit. Extended
-Infomax outputs use `desc-infomax*`, so they can coexist with AMICA outputs.
+Stage 8 reads reviewed run-level annotations and writes subject/session tables
+below `derivatives/blinkrate`. Dismissed blinks are excluded. The
+`review_complete` column identifies runs with unresolved blink decisions.
+Approved `BAD_*` spans remain in the denominator by default; pass
+`--exclude-bad-spans` to remove them from both duration and blink counting.
 
-## Running stage 5
+## Reproducibility and overwrite policy
 
-```bash
-python scripts/05_review_ica.py --condition silent --subject 1 --reviewer Tommaso
-
-# Review Extended Infomax instead
-python scripts/05_review_ica.py --condition silent --subject 1 --decomposition infomax --reviewer Tommaso
-```
-
-This GUI records component keep/reject decisions in the selected decomposition's
-component TSV; it does not apply them to a cleaned EEG derivative.
+All stages refuse to replace existing primary outputs unless `--overwrite` is
+explicitly supplied. Derivative metadata records the producing stage and its
+configuration. Review TSVs are the authoritative human-decision artifacts;
+the raw BIDS dataset and minimally processed FIF files remain immutable during
+review.

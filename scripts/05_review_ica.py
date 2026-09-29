@@ -1,4 +1,4 @@
-"""Review AMICA or Extended Infomax components in Tk."""
+"""Review Extended Infomax components in Tk."""
 
 from __future__ import annotations
 
@@ -80,12 +80,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--condition", choices=("overt", "silent"), required=True)
     parser.add_argument("--subject", type=int, required=True)
-    parser.add_argument(
-        "--decomposition",
-        choices=("amica", "infomax"),
-        default="infomax",
-        help="Stage 4 decomposition to review (default: infomax).",
-    )
     parser.add_argument("--derivatives-path", type=Path, default=Path("derivatives/preprocessing"))
     parser.add_argument("--reviewer", default="")
     return parser.parse_args()
@@ -100,7 +94,6 @@ class ICAReviewApplication:
         table: pd.DataFrame,
         table_path: Path,
         reviewer: str,
-        decomposition: str = "AMICA",
     ):
         import tkinter as tk
         from tkinter import ttk
@@ -141,7 +134,7 @@ class ICAReviewApplication:
         self.phase_artists = []
         self.psd_frequencies, self.component_psd = self._precompute_psd()
         self._precompute_evokeds()
-        root.title(f"Spell-IT-OUT {decomposition} component review")
+        root.title("Spell-IT-OUT Extended Infomax component review")
         root.geometry("1300x850")
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.columnconfigure(0, weight=1)
@@ -898,25 +891,25 @@ class ICAReviewApplication:
 
 def main(args: argparse.Namespace) -> None:
     import tkinter as tk
-    display_name = "AMICA" if args.decomposition == "amica" else "Extended Infomax"
     register_derivative_description(
         args.derivatives_path,
-        f"{args.decomposition}-components",
-        f"Fixed-policy automatic classification followed by human {display_name} "
-        f"component review; decisions and their source are stored in "
-        f"desc-{args.decomposition}_components.tsv.",
+        "infomax-components",
+        "ICLabel evidence, optional fixed-policy decision initialization, and "
+        "human Extended Infomax component review; decisions and their source "
+        "are stored in desc-infomax_components.tsv.",
     )
     subject = get_subject_id(args.subject)
     base = f"{subject}_ses-01_task-{args.condition}"
     eeg_dir = args.derivatives_path / subject / "ses-01" / "eeg"
-    input_desc = "ica-input" if args.decomposition == "amica" else "infomax-input"
     raw = mne.io.read_raw_fif(
-        eeg_dir / f"{base}_desc-{input_desc}_raw.fif", preload=False, verbose="error"
+        eeg_dir / f"{base}_desc-infomax-input_raw.fif",
+        preload=False,
+        verbose="error",
     )
     ica = mne.preprocessing.read_ica(
-        eeg_dir / f"{base}_desc-{args.decomposition}_ica.fif", verbose="error"
+        eeg_dir / f"{base}_desc-infomax_ica.fif", verbose="error"
     )
-    table_path = eeg_dir / f"{base}_desc-{args.decomposition}_components.tsv"
+    table_path = eeg_dir / f"{base}_desc-infomax_components.tsv"
     table = pd.read_csv(table_path, sep="\t")
     required = (
         "variance_contribution",
@@ -928,14 +921,14 @@ def main(args: argparse.Namespace) -> None:
     missing = [column for column in required if column not in table]
     if missing:
         raise RuntimeError(
-            f"This {display_name} component table predates ICLabel evidence. Re-run "
-            f"{'04_amica.py' if args.decomposition == 'amica' else '04_ica.py'} "
+            "This Extended Infomax component table predates ICLabel evidence. "
+            "Re-run 04_ica.py "
             "with --overwrite to generate: " + ", ".join(missing)
         )
     table = table.fillna("")
     root = tk.Tk()
     ICAReviewApplication(
-        root, raw, ica, table, table_path, args.reviewer, display_name
+        root, raw, ica, table, table_path, args.reviewer
     )
     root.mainloop()
 

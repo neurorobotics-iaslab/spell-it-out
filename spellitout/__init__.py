@@ -1,3 +1,3 @@
-from .spellitout import Event, SpellItOut
+from .spellitout import EventCode, RunData, SpellItOutDataset
 
-__all__ = ["Event", "SpellItOut"]
+__all__ = ["EventCode", "RunData", "SpellItOutDataset"]

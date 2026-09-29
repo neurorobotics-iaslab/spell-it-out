@@ -25,12 +25,6 @@ def parse_args() -> argparse.Namespace:
         help="Run numbers, in concatenation order (default: 1 2 3).",
     )
     parser.add_argument(
-        "--decomposition",
-        choices=("infomax", "amica"),
-        default="infomax",
-        help="Reviewed decomposition to apply (default: infomax).",
-    )
-    parser.add_argument(
         "--derivatives-path",
         type=Path,
         default=Path("derivatives/preprocessing"),
@@ -88,13 +82,11 @@ def reviewed_exclusions(table: pd.DataFrame, n_components: int) -> list[int]:
 def input_paths(
     eeg_dir: Path,
     base: str,
-    decomposition: str,
 ) -> tuple[Path, Path, Path]:
-    """Resolve the method-specific Stage 4/5 inputs."""
-    input_desc = "infomax-input" if decomposition == "infomax" else "ica-input"
-    raw_path = eeg_dir / f"{base}_desc-{input_desc}_raw.fif"
-    ica_path = eeg_dir / f"{base}_desc-{decomposition}_ica.fif"
-    components_path = eeg_dir / f"{base}_desc-{decomposition}_components.tsv"
+    """Resolve the Extended Infomax Stage 4/5 inputs."""
+    raw_path = eeg_dir / f"{base}_desc-infomax-input_raw.fif"
+    ica_path = eeg_dir / f"{base}_desc-infomax_ica.fif"
+    components_path = eeg_dir / f"{base}_desc-infomax_components.tsv"
     return raw_path, ica_path, components_path
 
 
@@ -185,15 +177,13 @@ def main(args: argparse.Namespace) -> None:
         subject = get_subject_id(subject_number)
         base = f"{subject}_ses-01_task-{args.condition}"
         eeg_dir = args.derivatives_path / subject / "ses-01" / "eeg"
-        raw_path, ica_path, components_path = input_paths(
-            eeg_dir, base, args.decomposition
-        )
+        raw_path, ica_path, components_path = input_paths(eeg_dir, base)
         for path in (raw_path, ica_path, components_path):
             if not path.exists():
                 raise FileNotFoundError(f"Missing ICA application input: {path}")
         output_paths = [
             eeg_dir
-            / f"{get_run_id(subject, args.condition, run_number)}_desc-{args.decomposition}-cleaned_raw.fif"
+            / f"{get_run_id(subject, args.condition, run_number)}_desc-infomax-cleaned_raw.fif"
             for run_number in args.runs
         ]
         existing = [path for path in output_paths if path.exists()]
@@ -228,7 +218,7 @@ def main(args: argparse.Namespace) -> None:
             ica.apply(cleaned, verbose="error")
             previous_description = cleaned.info.get("description") or ""
             summary = (
-                f"Reviewed condition-level {args.decomposition} ICA applied; rejected "
+                "Reviewed condition-level Extended Infomax ICA applied; rejected "
                 f"components: {excluded if excluded else 'none'}. Source decisions: "
                 f"{components_path.name}."
             )

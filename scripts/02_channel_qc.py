@@ -1,6 +1,6 @@
 """Run per-recording PREP channel QC without interpolating channels.
 
-This stage reads the ``01_minproc`` outputs and produces the canonical,
+This stage reads the ``01_preprocess`` outputs and produces the canonical,
 editable channel-review table. It does not alter the EEG derivative and does
 not make final channel decisions.
 """
@@ -64,7 +64,7 @@ def main(args: argparse.Namespace) -> None:
             minproc_path = output_dir / f"{base}_desc-minproc_raw.fif"
             if not minproc_path.exists():
                 raise FileNotFoundError(
-                    f"Missing {minproc_path}. Run 01_minproc.py before 02_channel_qc.py."
+                    f"Missing {minproc_path}. Run 01_preprocess.py before 02_channel_qc.py."
                 )
             logger.info("PREP channel QC: %s", base)
             raw = mne.io.read_raw_fif(minproc_path, preload=True, verbose="error")

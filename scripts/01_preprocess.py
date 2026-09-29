@@ -15,7 +15,7 @@ import sys
 
 sys.path.extend([".", ".."]) 
 
-from spellitout import SpellItOut
+from spellitout import SpellItOutDataset
 from spellitout.preprocessing import (
     MinimalPreprocessingConfig,
     build_minimal_run,
@@ -100,33 +100,35 @@ def main(args: argparse.Namespace) -> None:
         amplitude_peak_volts=(None if args.peak_uv is None else args.peak_uv * 1e-6),
     )
     ensure_derivative_scaffold(args.derivatives_path)
-    dataset = SpellItOut(
-        args.condition,
+    dataset = SpellItOutDataset(args.data_path)
+    for run in dataset.iter_runs(
         subjects=args.subjects,
-        runs=list(args.runs),
-        data_path=args.data_path,
-    )
-    for subject, runs in dataset.get_data(preload=True, return_events=True).items():
-        output_dir = args.derivatives_path / subject / "ses-01" / "eeg"
-        for run_name, (raw, _) in runs.items():
-            run_number = int(run_name.split("-")[-1])
-            base = get_run_id(subject, args.condition, run_number)
-            logger.info("Minimal preprocessing: %s", base)
-            minimal_raw, candidates = build_minimal_run(raw, config, logger)
-            paths = write_minimal_run(
-                minimal_raw,
-                candidates,
-                output_dir,
-                base,
-                config,
-                source={
-                    "subject": subject,
-                    "task": args.condition,
-                    "run": run_name,
-                },
-                overwrite=args.overwrite,
-            )
-            logger.info("Saved %s", paths["raw"])
+        tasks=args.condition,
+        runs=args.runs,
+        preload=True,
+    ):
+        if run.session is None or run.run_number is None:
+            raise ValueError(f"Recording lacks a session or run entity: {run.bids_path}")
+        output_dir = (
+            args.derivatives_path / run.subject_id / f"ses-{run.session}" / "eeg"
+        )
+        base = get_run_id(run.subject_id, run.task, run.run_number)
+        logger.info("Minimal preprocessing: %s", base)
+        minimal_raw, candidates = build_minimal_run(run.raw, config, logger)
+        paths = write_minimal_run(
+            minimal_raw,
+            candidates,
+            output_dir,
+            base,
+            config,
+            source={
+                "subject": run.subject_id,
+                "task": run.task,
+                "run": f"run-{run.run}",
+            },
+            overwrite=args.overwrite,
+        )
+        logger.info("Saved %s", paths["raw"])
 
 
 if __name__ == "__main__":
