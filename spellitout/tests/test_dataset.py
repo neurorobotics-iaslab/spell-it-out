@@ -19,6 +19,30 @@ def test_non_bids_directory_is_rejected(tmp_path):
         SpellItOutDataset(tmp_path)
 
 
+def test_matching_paths_excludes_nested_derivatives(monkeypatch, tmp_path):
+    (tmp_path / "dataset_description.json").write_text("{}", encoding="utf-8")
+    direct = tmp_path / "sub-01" / "eeg" / "sub-01_task-silent_eeg.vhdr"
+    derivative = (
+        tmp_path / "derivatives" / "preprocessing" / "sub-01" / "eeg"
+        / "sub-01_task-silent_desc-preproc_eeg.vhdr"
+    )
+
+    class FakePath:
+        def __init__(self, fpath, description):
+            self.fpath = fpath
+            self.description = description
+
+    monkeypatch.setattr(
+        "spellitout.spellitout.dataset.find_matching_paths",
+        lambda *args, **kwargs: [
+            FakePath(derivative, "preproc"), FakePath(direct, None)
+        ],
+    )
+    dataset = SpellItOutDataset(tmp_path)
+    matches = dataset._matching_paths()
+    assert [path.fpath for path in matches] == [direct]
+
+
 @pytest.mark.skipif(
     not (TEST_DATASET / "dataset_description.json").is_file(),
     reason="Local BIDS integration-test dataset is unavailable.",

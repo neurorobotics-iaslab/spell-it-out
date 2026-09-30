@@ -1,3 +1,15 @@
-from .spellitout import EventCode, RunData, SpellItOutDataset
+from .spellitout import (
+    BuildPaths,
+    EventCode,
+    RunData,
+    SpellItOutDataset,
+    build_syllable_datasets,
+)
 
-__all__ = ["EventCode", "RunData", "SpellItOutDataset"]
+__all__ = [
+    "BuildPaths",
+    "EventCode",
+    "RunData",
+    "SpellItOutDataset",
+    "build_syllable_datasets",
+]

@@ -18,12 +18,15 @@ fitting, and component application:
 5. `05_review_ica.py` reviews ICLabel evidence and component decisions.
 6. `06_apply_ica.py` applies the completed component decisions and restores
    separate cleaned run-level FIF files.
-7. `07_erd_ers.py` creates subject-level epoch/TFR checkpoints.
-8. `08_blink_rate.py` calculates reviewed blink-rate summaries.
+7. `07_export_preprocessed.py` validates and exports the publication-ready
+   preprocessing derivative in BrainVision format.
+8. `08_build_syllable_datasets.py` creates the configurable BIDS-derived HDF5
+   datasets used for syllable-level machine-learning experiments.
 
-Stages 1–6 form the preprocessing sequence. Stages 7 and 8 are downstream
-analyses; blink-rate calculation depends on the run-level review but does not
-require ICA application.
+Stages 1–6 form the reviewed preprocessing sequence. Stage 7 publishes its
+continuous output and Stage 8 derives the configurable syllable datasets.
+ERD/ERS and blink-rate analyses are paper-specific utilities under
+`per_paper/`, not stages of the dataset-production pipeline.
 
 ## Input dataset
 
@@ -184,12 +187,12 @@ the technical run boundaries, and writes:
 sub-*_ses-01_task-*_run-*_desc-infomax-cleaned_raw.fif
 ```
 
-## Stage 7: ERD/ERS checkpoints
+## Paper utility: ERD/ERS checkpoints
 
 Use the reviewed ICA input directly:
 
 ```bash
-python scripts/07_erd_ers.py \
+python per_paper/07_erd_ers.py \
   --condition silent \
   --subjects 1 2 3 \
   --input-stage ica_input \
@@ -199,7 +202,7 @@ python scripts/07_erd_ers.py \
 Or use the run-level ICA-cleaned outputs from Stage 6:
 
 ```bash
-python scripts/07_erd_ers.py \
+python per_paper/07_erd_ers.py \
   --condition silent \
   --subjects 1 2 3 \
   --input-stage cleaned \
@@ -211,19 +214,87 @@ Morlet TFRs, and applies CSD unless `--no-csd` is passed. Full-length epochs
 are retained even when they overlap `BAD_*` spans; overlap evidence is stored
 for selection during later analysis.
 
-## Stage 8: blink-rate summaries
+## Paper utility: blink-rate summaries
 
 ```bash
-python scripts/08_blink_rate.py \
+python per_paper/08_blink_rate.py \
   --conditions silent overt \
   --subjects 1 2 3
 ```
 
-Stage 8 reads reviewed run-level annotations and writes subject/session tables
+The utility reads reviewed run-level annotations and writes subject/session tables
 below `derivatives/blinkrate`. Dismissed blinks are excluded. The
 `review_complete` column identifies runs with unresolved blink decisions.
 Approved `BAD_*` spans remain in the denominator by default; pass
 `--exclude-bad-spans` to remove them from both duration and blink counting.
+
+## Stage 7: publication export
+
+Run the read-only preflight first:
+
+```bash
+python scripts/07_export_preprocessed.py validate
+```
+
+The validator requires a final ICA-cleaned FIF, completed annotation and
+channel reviews, completed component decisions, ICA metadata, and matching raw
+BIDS events for every selected run. A limited selection can be checked with
+`--subjects`, `--tasks`, and `--runs`.
+
+After validation succeeds, create the derivative:
+
+```bash
+python scripts/07_export_preprocessed.py apply
+```
+
+By default, the export is written to
+`data/spellitout_bids/derivatives/preprocessing`. Final continuous EEG is
+stored as `desc-preproc_eeg` BrainVision data. Standard `events.tsv` files
+contain experimental events plus retained blinks and approved `BAD_*` spans;
+standard `channels.tsv` files describe the final channel set and interpolation
+status.
+
+The complete project-specific audit trail is copied below `qc/`: annotation
+reviews, channel reviews, the condition-level channel plan, ICA component
+decisions, and ICA fit metadata. That directory is listed in `.bidsignore` so
+the files remain distributed without being misinterpreted as standard BIDS
+tables. Large reproducible checkpoints (`minproc`, concatenated ICA input, and
+the fitted ICA FIF) are not exported.
+
+The exporter never changes the working checkpoint tree. It refuses to write
+into a non-empty output unless `--overwrite` is explicitly supplied.
+
+## Stage 8: syllable-segment HDF5 datasets
+
+Run a read-only validation of the canonical sample definition:
+
+```bash
+python scripts/08_build_syllable_datasets.py validate
+```
+
+Then generate subject-level shards:
+
+```bash
+python scripts/08_build_syllable_datasets.py apply
+```
+
+The canonical configuration creates `silent_cue`, `overt_cue`, and
+`overt_production` datasets. EEG is aligned to the relevant syllable event;
+overt-production samples also contain audio cropped to the annotated production
+duration. Epochs overlapping `BAD_*` spans are excluded, while `BLINK` alone is
+retained. Missing production annotations and all other exclusions are recorded
+in `exclusions.tsv` rather than synthesized.
+
+The configuration can select raw or published preprocessed BIDS recordings and
+can add filtering, notch filtering, resampling, rereferencing, detrending, or
+baseline correction. These operations are applied to an in-memory copy and are
+stored verbatim, with a SHA-256 digest, in each HDF5 file. The output is
+BIDS-derived but deliberately not presented as a validator-compatible BIDS EEG
+datatype.
+
+The distributed default configuration applies a 2–70 Hz band-pass filter, a
+50 Hz notch filter, and resampling to 512 Hz before window extraction. Changing
+the JSON configuration produces a different recorded configuration digest.
 
 ## Reproducibility and overwrite policy
 

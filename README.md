@@ -33,3 +33,35 @@ python scripts/01_preprocess.py \
 
 The data location is provided through `--data-path` or the existing
 `MNE_DATASETS_SPELLITOUT_DATA_PATH` environment variable.
+
+After all QC and ICA decisions have been reviewed, validate and create the
+publication-ready BIDS derivative with:
+
+```bash
+python scripts/07_export_preprocessed.py validate
+python scripts/07_export_preprocessed.py apply
+```
+
+## Syllable-segment datasets
+
+Stage 8 builds efficient HDF5 shards containing fixed-window EEG samples,
+phonetic labels, and duration-matched audio for overt productions. Validate the
+complete input inventory without writing anything, then apply the canonical
+configuration:
+
+```bash
+python scripts/08_build_syllable_datasets.py validate
+python scripts/08_build_syllable_datasets.py apply
+```
+
+The defaults are defined in
+[`configs/syllable_dataset_default.json`](configs/syllable_dataset_default.json).
+CLI options can select raw or preprocessed continuous data and override the EEG
+window. The HDF5 outputs are explicitly **BIDS-derived analysis artifacts**, not
+standard BIDS EEG files; each sample remains traceable through the manifest and
+source BIDS entities.
+
+The default configuration applies an additional 2–70 Hz band-pass filter, a
+50 Hz notch filter, and resampling to 512 Hz before extracting EEG windows.
+These choices are stored with the complete resolved configuration and its
+SHA-256 digest in every HDF5 shard.

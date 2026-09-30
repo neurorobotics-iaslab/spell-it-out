@@ -1,15 +1,76 @@
 from enum import Enum
+from functools import lru_cache
 from importlib.resources import files
+from typing import Any
 
 import numpy as np
-from pandas import read_csv
+import pandas as pd
 
-try:
-    resource_path = files("spellitout.resources").joinpath("phonItalia-1.10-wordforms.tsv")
-    with resource_path.open("r", encoding="utf-8") as f:
-        phonitalia = read_csv(f, delimiter="\t", low_memory=False)[['word', 'PhoneSyll']]
-except Exception as e:
-    print(f"Could not load phonetics database: {e}. Please check that the package is correctly installed.")
+
+def _load_phonitalia_resource(
+    filename: str,
+    *,
+    default_header: int,
+    **read_csv_kwargs: Any,
+) -> pd.DataFrame:
+    """Load one packaged phonItalia TSV using overridable Pandas options."""
+    options: dict[str, Any] = {
+        "sep": "\t",
+        "header": default_header,
+        "low_memory": False,
+    }
+    options.update(read_csv_kwargs)
+    resource = files("spellitout.resources").joinpath(filename)
+    with resource.open("r", encoding="utf-8") as stream:
+        return pd.read_csv(stream, **options)
+
+
+def load_phonitalia_wordforms(**read_csv_kwargs: Any) -> pd.DataFrame:
+    """Load ``phonItalia-1.10-wordforms.tsv`` as a DataFrame.
+
+    Additional keyword arguments are forwarded to :func:`pandas.read_csv` and
+    override the defaults. For example, ``usecols=["word", "PhoneSyll"]`` can
+    be used to load only the orthographic and phonological syllable columns.
+    """
+    return _load_phonitalia_resource(
+        "phonItalia-1.10-wordforms.tsv",
+        default_header=0,
+        **read_csv_kwargs,
+    )
+
+
+def load_phonitalia_phones(**read_csv_kwargs: Any) -> pd.DataFrame:
+    """Load ``phonItalia-1.10-phones.tsv`` as a DataFrame.
+
+    Its second physical row contains the tabular column names, so ``header=1``
+    is used by default. Pandas disambiguates repeated names with suffixes such
+    as ``.1`` and ``.2``. Pass a different ``header`` value to override this.
+    """
+    return _load_phonitalia_resource(
+        "phonItalia-1.10-phones.tsv",
+        default_header=1,
+        **read_csv_kwargs,
+    )
+
+
+def load_phonitalia_syllables(**read_csv_kwargs: Any) -> pd.DataFrame:
+    """Load ``phonItalia-1.10-syllables.tsv`` as a DataFrame.
+
+    Its second physical row contains the tabular column names, so ``header=1``
+    is used by default. Pandas disambiguates repeated names with suffixes such
+    as ``.1`` and ``.2``. Pass a different ``header`` value to override this.
+    """
+    return _load_phonitalia_resource(
+        "phonItalia-1.10-syllables.tsv",
+        default_header=1,
+        **read_csv_kwargs,
+    )
+
+
+@lru_cache(maxsize=1)
+def _word_pronunciations() -> pd.DataFrame:
+    """Lazily cache only the columns needed for word transcription."""
+    return load_phonitalia_wordforms(usecols=["word", "PhoneSyll"])
 
 class PhoneticCategory(Enum):
     # name is the name of the category
@@ -123,6 +184,7 @@ def split_into_phonemes(text):
     text = text.replace('à','a').replace('è','e').replace('é','e').replace('ì','i').replace('ò','o').replace('ù','u')
     words = text.lower().split()
 
+    phonitalia = _word_pronunciations()
     syllables = []
     for word in words:
         if word in phonitalia.word.values:

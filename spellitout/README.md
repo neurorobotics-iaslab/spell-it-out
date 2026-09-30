@@ -45,3 +45,22 @@ from spellitout import EventCode
 
 assert int(EventCode.REPETITION) == 782
 ```
+
+## phonItalia resources
+
+The packaged phonItalia tables can be loaded directly as Pandas DataFrames:
+
+```python
+from spellitout.it_phonetics import (
+    load_phonitalia_phones,
+    load_phonitalia_syllables,
+    load_phonitalia_wordforms,
+)
+
+wordforms = load_phonitalia_wordforms()
+phones = load_phonitalia_phones()
+syllables = load_phonitalia_syllables()
+```
+
+The word-pronunciation lookup used by `split_into_phonemes()` is loaded lazily
+on its first call and then cached for the remainder of the process.

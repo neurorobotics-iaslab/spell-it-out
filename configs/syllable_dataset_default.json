@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "source": "preprocessed",
+  "datasets": [
+    {
+      "name": "silent_cue",
+      "description_label": "silentcue",
+      "task": "silent",
+      "event_type": "syllabification_cue",
+      "include_audio": false
+    },
+    {
+      "name": "overt_cue",
+      "description_label": "overtcue",
+      "task": "overt",
+      "event_type": "syllabification_cue",
+      "include_audio": false
+    },
+    {
+      "name": "overt_production",
+      "description_label": "overtproduction",
+      "task": "overt",
+      "event_type": "syllabification_syllable",
+      "pair_reference_event_type": "syllabification_cue",
+      "include_audio": true
+    }
+  ],
+  "eeg": {
+    "tmin": -0.3,
+    "tmax": 0.6,
+    "picks": "eeg",
+    "exclude_bad_overlap": true,
+    "bad_annotation_source": "source",
+    "baseline": null,
+    "detrend": null,
+    "units": "V",
+    "dtype": "float32"
+  },
+  "preprocessing": {
+    "l_freq": 2,
+    "h_freq": 70,
+    "notch_freqs": [50],
+    "resample_sfreq": 512,
+    "reference": null
+  },
+  "audio": {
+    "sampling_frequency": "native",
+    "channel_policy": "mono"
+  },
+  "hdf5": {
+    "compression": "gzip",
+    "compression_level": 4,
+    "shuffle": true
+  }
+}

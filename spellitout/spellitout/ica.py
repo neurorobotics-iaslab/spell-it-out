@@ -225,7 +225,15 @@ def condition_channel_plan(channel_tables: dict[str, pd.DataFrame]) -> tuple[lis
                 "exclude_triggering_runs": ";".join(sorted(exclude.get(channel, []))),
             }
         )
-    return interpolated, excluded, pd.DataFrame(rows)
+    return interpolated, excluded, pd.DataFrame(
+        rows,
+        columns=(
+            "channel",
+            "condition_decision",
+            "interpolate_triggering_runs",
+            "exclude_triggering_runs",
+        ),
+    )
 
 
 def prepare_ica_input(

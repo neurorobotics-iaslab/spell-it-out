@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 
@@ -100,6 +101,11 @@ class SpellItOutDataset:
             raise FileNotFoundError(
                 f"BIDS dataset_description.json not found: {description}"
             )
+        try:
+            metadata = json.loads(description.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"Invalid BIDS dataset description: {description}") from error
+        self.dataset_type = str(metadata.get("DatasetType", "raw")).lower()
 
     def _matching_paths(
         self,
@@ -120,7 +126,16 @@ class SpellItOutDataset:
             extensions=EEG_EXTENSIONS,
             check=True,
         )
-        return sorted(paths, key=lambda path: str(path.fpath))
+        # ``find_matching_paths`` descends into ``derivatives`` but currently
+        # reconstructs those matches below the raw root. Published Spell-IT-OUT
+        # derivatives always carry a ``desc-*`` entity; raw recordings do not.
+        # A derivative remains loadable by passing its own dataset root.
+        direct_paths = (
+            paths
+            if self.dataset_type == "derivative"
+            else [path for path in paths if path.description is None]
+        )
+        return sorted(direct_paths, key=lambda path: str(path.fpath))
 
     @property
     def recordings(self) -> tuple[BIDSPath, ...]:
@@ -241,6 +256,7 @@ class SpellItOutDataset:
                 "No EEG recording found for "
                 f"sub-{_label(subject, 'sub')}, ses-{_label(session, 'ses')}, "
                 f"task-{task}, run-{_label(run, 'run')}."
+                f"Dataset root: {self.root}"
             )
         if len(paths) != 1:
             matches = "\n".join(f"- {path.fpath}" for path in paths)
