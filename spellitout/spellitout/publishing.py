@@ -579,8 +579,12 @@ def write_derivative_scaffold(
     for key in ("License", "Authors", "Acknowledgements", "HowToAcknowledge"):
         if key in source:
             description[key] = source[key]
+    source_dataset = {"URL": _raw_link(output_root, raw_bids_root)}
     if source.get("DatasetDOI"):
-        description["SourceDatasets"] = [{"DOI": source["DatasetDOI"]}]
+        source_dataset["DOI"] = source["DatasetDOI"]
+    if source.get("DatasetVersion"):
+        source_dataset["Version"] = source["DatasetVersion"]
+    description["SourceDatasets"] = [source_dataset]
     _write_json(output_root / "dataset_description.json", description)
 
     (output_root / "README").write_text(

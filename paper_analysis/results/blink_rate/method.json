@@ -1,0 +1,65 @@
+{
+  "Description": "Reviewed spontaneous eye-blink counts and rates by run and task phase.",
+  "blink_count": "Number of reviewed BLINK annotation centres within the phase.",
+  "blink_rate_per_min": "blink_count divided by valid_duration_s, multiplied by 60.",
+  "n_syllabification_cues": "Number of syllabification_cue events contributing to the syllabification phase; zero for all other phases.",
+  "review_complete": "False when one or more BLINK annotations in the run remain unreviewed.",
+  "bad_spans_excluded": "Whether approved BAD_* spans were removed from duration and blink counting.",
+  "PhaseDefinitions": {
+    "run": "Complete run interval.",
+    "sentence_listening": "Each listening_cue interval, aggregated per run.",
+    "sentence_repetition": "Each repetition_cue interval, aggregated per run.",
+    "syllabification": "Each consecutive syllabification_cue block, aggregated per run."
+  },
+  "CountRule": "BLINK annotations with review_status keep or unreviewed are counted; dismissed annotations are excluded.",
+  "MinimumBlinkSeparation": "Events with centres closer than the configured minimum separation are counted once; source annotations are not modified.",
+  "Parameters": {
+    "conditions": [
+      "silent",
+      "overt"
+    ],
+    "subjects": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25
+    ],
+    "runs": [
+      1,
+      2,
+      3
+    ],
+    "exclude_bad_spans": true,
+    "minimum_blink_separation_ms": 350.0,
+    "reviewed_preprocessing_path": "derivatives\\preprocessing"
+  },
+  "ArticleTables": {
+    "Description": "Mean blink rate per minute across runs, by subject and phase.",
+    "Rounding": "One decimal place for article reporting.",
+    "Files": [
+      "mean_blink_rate_task-silent.tsv",
+      "mean_blink_rate_task-overt.tsv"
+    ]
+  }
+}

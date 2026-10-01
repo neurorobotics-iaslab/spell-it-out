@@ -12,30 +12,6 @@ import mne
 import numpy as np
 import pandas as pd
 
-ERD_BANDS = {
-    "Theta": (4.0, 8.0),
-    "Alpha": (8.0, 12.0),
-    "Low Beta": (12.0, 16.0),
-    "High Beta": (16.0, 30.0),
-    "Low Gamma": (30.0, 45.0),
-}
-# TRIAL_WINDOWS = {
-#     "Listening": (-6.5, -3.5),
-#     # "Baseline": (-3.0, -0.1),
-#     "Sentence rep.": (1.0, 4.0),
-#     "Rep. end": (6.0, 7.0),
-#     "Dots": (7.0, 8.8),
-#     "Syllable rep.": (8.8, 20.8),
-# }
-TRIAL_WINDOWS = {
-    "LISTEN": (-6.5, -3.5),
-    # "Baseline": (-3.0, -0.1),
-    "REP": (1.0, 4.0),
-    "REP": (6.0, 7.0),
-    "DOTS": (7.0, 8.8),
-    "SYLL.": (8.8, 20.8),
-}
-
 
 @dataclass(frozen=True)
 class ERDERSConfig:
@@ -192,6 +168,8 @@ def compute_subject_tfr(
     report.loc[~report["tfr_available"], "drop_reason"] = "TOO_SHORT"
     if not len(epochs):
         raise RuntimeError("No full-length epochs are available for TFR computation.")
+    if not np.isclose(epochs.info["sfreq"], config.resample_sfreq):
+        epochs.resample(config.resample_sfreq, npad="auto", verbose="error")
     if config.apply_csd:
         epochs = mne.preprocessing.compute_current_source_density(epochs, verbose="error")
     freqs = np.arange(config.fmin, config.fmax + config.fstep / 2, config.fstep)
@@ -266,8 +244,6 @@ def write_subject_tfr_outputs(
         "input_paths": [str(path) for path in source_paths],
         "input_mtimes_ns": [path.stat().st_mtime_ns for path in source_paths],
         "configuration": asdict(config),
-        "bands_hz": ERD_BANDS,
-        "plot_windows_s": TRIAL_WINDOWS,
         "normalization": "none; apply baseline during plotting",
         "bad_span_policy": "all extractable epochs retained; BAD_* overlap is recorded in epochs.tsv",
     }

@@ -1,0 +1,70 @@
+{
+  "Description": "Epoch-level Morlet TFR checkpoints for the paper ERD/ERS analysis.",
+  "SignalSource": "preprocessed",
+  "AnnotationSource": "signal source events",
+  "Configuration": {
+    "input_stage": "preprocessed",
+    "event_name": "repetition_cue",
+    "tmin": -10.0,
+    "tmax": 22.0,
+    "resample_sfreq": 128.0,
+    "fmin": 2.0,
+    "fmax": 60.0,
+    "fstep": 2.0,
+    "n_cycles_divisor": 2.0,
+    "apply_csd": true,
+    "n_jobs": 1
+  },
+  "Runs": [
+    1,
+    2,
+    3
+  ],
+  "ConfigurationSHA256": "69c4f65632e1b0f13f4c8b570747cb47eaef76a5e33a31d18a325dd344bb99c5",
+  "BandsHz": {
+    "Theta": [
+      4.0,
+      8.0
+    ],
+    "Alpha": [
+      8.0,
+      12.0
+    ],
+    "Low Beta": [
+      12.0,
+      16.0
+    ],
+    "High Beta": [
+      16.0,
+      30.0
+    ],
+    "Low Gamma": [
+      30.0,
+      45.0
+    ]
+  },
+  "PlotWindowsSeconds": {
+    "LISTEN": [
+      -6.5,
+      -3.5
+    ],
+    "REP": [
+      1.0,
+      4.0
+    ],
+    "REP END": [
+      6.0,
+      7.0
+    ],
+    "DOTS": [
+      7.0,
+      8.8
+    ],
+    "SYLL.": [
+      8.8,
+      20.8
+    ]
+  },
+  "Normalization": "Per-epoch dB baseline correction during aggregation.",
+  "BadSpanPolicy": "All extractable epoch TFRs are cached; max_bad_duration is applied during plotting."
+}

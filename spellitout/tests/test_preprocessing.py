@@ -13,7 +13,7 @@ from spellitout.ica import (
     component_energy_fractions,
     condition_channel_plan,
 )
-from spellitout.erd_ers import epoch_badness
+from spellitout.erd_ers import ERDERSConfig, compute_subject_tfr, epoch_badness
 from spellitout.blink_rate import _reviewed_blinks, enforce_minimum_blink_separation
 
 from spellitout.preprocessing import (
@@ -118,6 +118,33 @@ def test_erd_epoch_badness_unions_overlapping_bad_spans():
 
     assert np.isclose(report.loc[0, "bad_overlap_seconds"], 0.20)
     assert not bool(report.loc[0, "tfr_available"])
+
+
+def test_erd_tfr_is_resampled_before_computation():
+    sfreq = 100.0
+    time = np.arange(int(sfreq * 10)) / sfreq
+    raw = mne.io.RawArray(
+        np.sin(2 * np.pi * 8 * time)[None, :] * 1e-6,
+        mne.create_info(["C3"], sfreq=sfreq, ch_types="eeg"),
+        verbose="error",
+    )
+    raw.set_annotations(mne.Annotations([5.0], [0.0], ["repetition_cue"]))
+    config = ERDERSConfig(
+        tmin=-1.0,
+        tmax=1.0,
+        resample_sfreq=25.0,
+        fmin=4.0,
+        fmax=10.0,
+        fstep=6.0,
+        n_cycles_divisor=2.0,
+        apply_csd=False,
+    )
+
+    tfr, report = compute_subject_tfr(raw, config, logging.getLogger(__name__))
+
+    assert tfr.info["sfreq"] == 25.0
+    assert len(tfr) == 1
+    assert bool(report.loc[0, "tfr_available"])
 
 
 def test_unreviewed_blinks_are_counted_and_reported():

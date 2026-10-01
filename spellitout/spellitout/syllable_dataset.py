@@ -10,7 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 import hashlib
+import importlib.metadata
 import json
+import os
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -501,7 +503,64 @@ def _relative(path: Path, root: Path) -> str:
         return str(path.resolve())
 
 
+def _dataset_link(output_root: Path, target: Path) -> str:
+    """Represent a linked BIDS dataset relative to the derivative when possible."""
+    try:
+        return Path(os.path.relpath(target, output_root)).as_posix()
+    except ValueError:
+        return target.resolve().as_uri()
+
+
+def _package_version(distribution: str, fallback: str = "unknown") -> str:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return fallback
+
+
+def write_syllable_dataset_description(paths: BuildPaths) -> Path:
+    """Write the BIDS derivative dataset description for HDF5 syllable data."""
+    source_path = paths.bids_root / "dataset_description.json"
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    description: dict[str, Any] = {
+        "Name": "Spell-IT-OUT syllable-segment datasets",
+        "BIDSVersion": source.get("BIDSVersion", "1.11.1"),
+        "DatasetType": "derivative",
+        "DatasetLinks": {
+            "raw": _dataset_link(paths.output_root, paths.bids_root),
+            "preprocessing": _dataset_link(
+                paths.output_root, paths.preprocessed_root
+            ),
+        },
+        "GeneratedBy": [
+            {
+                "Name": "spellitout.syllable_dataset",
+                "Version": _package_version("spellitout", "0.1.0"),
+                "Description": (
+                    "Construction of fixed-window EEG syllable segments and "
+                    "duration-matched overt-speech audio segments in HDF5."
+                ),
+            }
+        ],
+        "SourceDatasets": [
+            {"URL": _dataset_link(paths.output_root, paths.bids_root)},
+            {"URL": _dataset_link(paths.output_root, paths.preprocessed_root)},
+        ],
+    }
+    for key in ("License", "Authors", "Acknowledgements", "HowToAcknowledge"):
+        if key in source:
+            description[key] = source[key]
+    if source.get("DatasetDOI"):
+        description["SourceDatasets"][0]["DOI"] = source["DatasetDOI"]
+    if source.get("DatasetVersion"):
+        description["SourceDatasets"][0]["Version"] = source["DatasetVersion"]
+    output = paths.output_root / "dataset_description.json"
+    output.write_text(json.dumps(description, indent=2) + "\n", encoding="utf-8")
+    return output
+
+
 def _write_metadata(paths: BuildPaths, config: dict[str, Any], digest: str) -> None:
+    write_syllable_dataset_description(paths)
     metadata = {
         "Name": "Spell-IT-OUT syllable-segment datasets",
         "Format": "BIDS-derived HDF5 (non-standard analysis artifact)",

@@ -205,9 +205,12 @@ BLINKRATE_COLUMNS = (
 )
 
 
-def write_blinkrate_sidecar(output_root: Path) -> Path:
+def write_blinkrate_sidecar(
+    output_root: Path,
+    filename: str = "desc-blinkrate.json",
+) -> Path:
     output_root.mkdir(parents=True, exist_ok=True)
-    path = output_root / "desc-blinkrate.json"
+    path = output_root / filename
     metadata = {
         "Description": "Reviewed spontaneous eye-blink counts and rates by run and task phase.",
         "blink_count": "Number of reviewed BLINK annotation centres within the phase.",

@@ -1,0 +1,35 @@
+{
+  "Description": "Subject-level occipital ROI ERP checkpoints for the paper.",
+  "SignalSource": "preprocessed",
+  "AnnotationSource": "signal source events",
+  "Configuration": {
+    "source": "preprocessed",
+    "conditions": [
+      "overt",
+      "silent"
+    ],
+    "events": [
+      "pre_syllabification_dot",
+      "syllabification_cue"
+    ],
+    "runs": [
+      1,
+      2,
+      3
+    ],
+    "tmin": -0.2,
+    "tmax": 0.6,
+    "baseline": null,
+    "lowpass": 30.0,
+    "reject_blinks": false,
+    "occipital_channels": [
+      "O1",
+      "OZ",
+      "O2"
+    ]
+  },
+  "ConfigurationSHA256": "1a4c2395cf3cc585028bbc71894adf8b78b55f3af3fb6cbaae48955e5c376a7d",
+  "CheckpointContents": "Per-subject ROI mean across retained epochs and ROI channels, time vector, channel names, epoch count, and blink-span count.",
+  "BadSpanPolicy": "Epochs overlapping BAD_* annotations are rejected.",
+  "Normalization": "No baseline correction"
+}

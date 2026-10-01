@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from spellitout.syllable_dataset import (
+    BuildPaths,
     DatasetSpec,
     _ShardWriter,
     bad_intervals,
@@ -13,6 +14,7 @@ from spellitout.syllable_dataset import (
     load_config,
     overlaps_bad,
     read_phonetic_categories,
+    write_syllable_dataset_description,
 )
 
 
@@ -90,3 +92,43 @@ def test_hdf5_shard_roundtrip(tmp_path):
         assert handle["eeg/data"].shape == (1, 2, 3)
         assert handle["samples/syllable"].asstr()[0] == "a"
         assert handle["labels/phonetic_categories"][:].tolist() == [[1]]
+
+
+def test_syllable_derivative_description_has_generated_by_and_links(tmp_path):
+    bids_root = tmp_path / "bids"
+    preprocessing_root = bids_root / "derivatives" / "preprocessing"
+    output_root = bids_root / "derivatives" / "syllable-datasets"
+    output_root.mkdir(parents=True)
+    preprocessing_root.mkdir(parents=True)
+    (bids_root / "dataset_description.json").write_text(
+        json.dumps(
+            {
+                "Name": "Raw dataset",
+                "BIDSVersion": "1.11.1",
+                "DatasetType": "raw",
+                "License": "CC0",
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths = BuildPaths(
+        bids_root=bids_root,
+        source_root=preprocessing_root,
+        preprocessed_root=preprocessing_root,
+        output_root=output_root,
+    )
+
+    description_path = write_syllable_dataset_description(paths)
+
+    description = json.loads(description_path.read_text(encoding="utf-8"))
+    assert description["DatasetType"] == "derivative"
+    assert description["GeneratedBy"][0]["Name"] == "spellitout.syllable_dataset"
+    assert description["DatasetLinks"] == {
+        "raw": "../..",
+        "preprocessing": "../preprocessing",
+    }
+    assert description["SourceDatasets"] == [
+        {"URL": "../.."},
+        {"URL": "../preprocessing"},
+    ]
+    assert description["License"] == "CC0"
