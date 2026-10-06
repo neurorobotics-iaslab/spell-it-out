@@ -17,7 +17,7 @@ def get_run_id(subj_id, condition, run_no):
     Generates a run ID string based on the subject ID, condition, and run number.
     Args:
         subj_id (str): Subject ID in the format 'sub-XX' or as an integer.
-        condition (str): Experimental condition ('overt' or 'silent').
+        condition (str): Experimental condition ('overt' or 'covert').
         run_no (int): Run number in the format 'run-XX' or as an integer (range 1-3).
     Returns:
         str: Run ID string.
@@ -27,14 +27,14 @@ def get_run_id(subj_id, condition, run_no):
     else:
         if not subj_id.startswith("sub-"):
             raise ValueError(f"subj_id must be an integer or a string starting with 'sub-'. Got {subj_id}")
-    if condition not in ["overt", "silent"]:
-        raise ValueError(f"condition must be either 'overt' or 'silent'. Got {condition}")
+    if condition not in ["overt", "covert"]:
+        raise ValueError(f"condition must be either 'overt' or 'covert'. Got {condition}")
     if isinstance(run_no, int):
         run_str = f"run-{run_no:02d}"
     return f"{subj_id}_ses-01_task-{condition}_{run_str}"
 
 
-def make_montage(subset_channels=None):
+def make_montage(subset_channels=None, montage_name='standard_1020'):
 
     """ Create a dig montage with a (optional) subset of 10-20 standard EEG channels.
     Args:
@@ -43,7 +43,7 @@ def make_montage(subset_channels=None):
         montage (mne.channels.DigMontage): Montage object with the specified channels.
     """
 
-    full_montage = make_standard_montage('standard_1020')
+    full_montage = make_standard_montage(montage_name)
 
     if subset_channels is None:
         return full_montage

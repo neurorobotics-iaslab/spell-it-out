@@ -10,7 +10,6 @@ while retaining the original signal samples.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 from pathlib import Path
@@ -29,19 +28,23 @@ import pandas as pd
 from spellitout import SpellItOutDataset
 
 
-DEFAULT_BIDS_ROOT = Path("data/spellitout_bids")
-DEFAULT_OUTPUT = Path("per_paper/results/erp")
-DEFAULT_CONDITIONS = ("overt", "silent")
+DEFAULT_BIDS_ROOT = Path("data/spellitout")
+DEFAULT_OUTPUT = Path("paper_analysis/results/erp")
+DEFAULT_CONDITIONS = ("overt", "covert")
 DEFAULT_EVENTS = ("pre_syllabification_dot", "syllabification_cue")
-DEFAULT_OCCIPITAL_CHANNELS = ("O1", "OZ", "O2")
-CONDITION_LABELS = {"overt": "Overt Speech", "silent": "Imagined Speech"}
+DEFAULT_CHANNELS = ("O1", "OZ", "O2")
+CONDITION_LABELS = {"overt": "Overt Speech", "covert": "Covert Speech"}
 EVENT_ALIASES = {
     "sentence_cue": "listening_cue",
     "rhythm_dots": "pre_syllabification_dot",
     "syllable_cue": "syllabification_cue",
 }
-N170_WINDOW_MS = (140.0, 200.0)
-
+N170_WINDOW_MS = (140.0, 250.0)
+EVENT_NAMES = {
+    "listening_cue": "LISTEN.",
+    "pre_syllabification_dot": "DOTS",
+    "syllabification_cue": "SYLL.",
+}
 
 def optional_float(value: str) -> float | None:
     if value.lower() in {"none", "null", "off"}:
@@ -107,7 +110,7 @@ def parse_args() -> argparse.Namespace:
         help="Treat reviewed BLINK annotations as BAD_BLINK during epoching.",
     )
     parser.add_argument(
-        "--occipital-channels", nargs="+", default=DEFAULT_OCCIPITAL_CHANNELS
+        "--channels", nargs="+", default=DEFAULT_CHANNELS
     )
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument(
@@ -155,16 +158,43 @@ def _checkpoint_configuration(args: argparse.Namespace) -> dict[str, object]:
         "baseline": _baseline(args),
         "lowpass": args.lowpass,
         "reject_blinks": args.reject_blinks,
-        "occipital_channels": list(args.occipital_channels),
+        "channels": list(args.channels),
     }
 
 
 def source_output_root(args: argparse.Namespace) -> Path:
-    payload = json.dumps(
-        _checkpoint_configuration(args), sort_keys=True
-    ).encode("utf-8")
-    digest = hashlib.sha256(payload).hexdigest()[:12]
-    return args.output_path / f"source-{args.source}" / f"erp-{digest}"
+    baseline = (
+        "none" if args.baseline is None
+        else "-".join(_number_label(value) for value in args.baseline)
+    )
+    processing = (
+        f"window-{_number_label(args.tmin)}-{_number_label(args.tmax)}s_"
+        f"lowpass-{_number_label(args.lowpass)}_baseline-{baseline}_"
+        f"blinks-{'reject' if args.reject_blinks else 'keep'}"
+    )
+    events = "__".join(EVENT_ALIASES.get(event, event) for event in args.events)
+    return (
+        args.output_path / f"source-{args.source}"
+        / f"tasks-{'-'.join(args.conditions)}" / f"events-{events}"
+        / f"runs-{'-'.join(str(run) for run in sorted(set(args.runs)))}"
+        / f"channels-{'-'.join(args.channels)}" / processing
+    )
+
+
+def _number_label(value: float | None) -> str:
+    return "none" if value is None else str(float(value)).replace("-", "m").replace(".", "p")
+
+
+def _check_method(root: Path, args: argparse.Namespace) -> None:
+    path = root / "method.json"
+    if not path.exists():
+        if (root / "subject_erps").exists():
+            raise RuntimeError(f"Checkpoint configuration is missing: {path}")
+        return
+    stored = json.loads(path.read_text(encoding="utf-8"))["Configuration"]
+    expected = json.loads(json.dumps(_checkpoint_configuration(args)))
+    if stored != expected:
+        raise RuntimeError(f"ERP checkpoint configuration differs from requested parameters: {path}")
 
 
 def _slug(value: str) -> str:
@@ -306,10 +336,11 @@ def _write_checkpoint(
 
 
 def _write_method(root: Path, args: argparse.Namespace) -> None:
+    _check_method(root, args)
     configuration = _checkpoint_configuration(args)
     root.mkdir(parents=True, exist_ok=True)
     metadata = {
-        "Description": "Subject-level occipital ROI ERP checkpoints for the paper.",
+        "Description": "Subject-level ROI ERP checkpoints for the paper.",
         "SignalSource": args.source,
         "AnnotationSource": (
             "published preprocessing derivative"
@@ -317,9 +348,6 @@ def _write_method(root: Path, args: argparse.Namespace) -> None:
             else "signal source events"
         ),
         "Configuration": configuration,
-        "ConfigurationSHA256": hashlib.sha256(
-            json.dumps(configuration, sort_keys=True).encode("utf-8")
-        ).hexdigest(),
         "CheckpointContents": (
             "Per-subject ROI mean across retained epochs and ROI channels, "
             "time vector, channel names, epoch count, and blink-span count."
@@ -377,7 +405,7 @@ def compute_checkpoints(args: argparse.Namespace) -> None:
             rejected_blinks = _mark_blinks_bad(raw) if args.reject_blinks else 0
             roi_channels = [
                 channel
-                for channel in args.occipital_channels
+                for channel in args.channels
                 if channel in raw.ch_names
             ]
             if not roi_channels:
@@ -499,9 +527,7 @@ def _analysis_label(args: argparse.Namespace) -> str:
     cohort = (
         "all"
         if args.subjects is None
-        else hashlib.sha256(
-            json.dumps(sorted(set(args.subjects))).encode("utf-8")
-        ).hexdigest()[:8]
+        else "-".join(f"{subject:02d}" for subject in sorted(set(args.subjects)))
     )
     zero = f"{args.plot_zero:g}".replace("-", "m").replace(".", "p")
     return f"cohort-{cohort}_plotzero-{zero}"
@@ -531,7 +557,7 @@ def plot_comparison(
     figure, axes = plt.subplots(
         len(events),
         len(args.conditions),
-        figsize=(5.0 * len(args.conditions), 2.9 * len(events)),
+        figsize=(5.0 * len(args.conditions), 2.5 * len(events)),
         sharex=True,
         sharey=True,
         squeeze=False,
@@ -539,6 +565,8 @@ def plot_comparison(
     for row, event in enumerate(events):
         for column, condition in enumerate(args.conditions):
             axis = axes[row, column]
+            print (panels.keys(),events)
+
             panel = panels[(event, condition)]
             milliseconds = (panel["times"] - args.plot_zero) * 1000
             axis.axvspan(*N170_WINDOW_MS, color="#7f7f7f", alpha=0.10, zorder=0)
@@ -579,8 +607,10 @@ def plot_comparison(
                     fontweight="bold",
                 )
             if column == 0:
+                event_label = EVENT_NAMES.get(event, event)
                 axis.set_ylabel(
-                    f"{event.replace('_', ' ').title()}\nAmplitude (µV)"
+                    rf"$\mathbf{{{event_label}}}$" + "\nAmplitude (µV)",
+                    fontweight="normal",
                 )
             if row == len(events) - 1:
                 axis.set_xlabel("Time (ms)")
@@ -597,7 +627,7 @@ def plot_comparison(
                 facecolor="#7f7f7f",
                 alpha=0.10,
                 label=(
-                    f"N170 window "
+                    f"ERP window "
                     f"({N170_WINDOW_MS[0]:g}–{N170_WINDOW_MS[1]:g} ms)"
                 ),
             ),
@@ -613,7 +643,7 @@ def plot_comparison(
     condition_slug = "-".join(args.conditions)
     event_slug = "-".join(_slug(event) for event in events)
     stem = output_dir / (
-        f"task-{condition_slug}_desc-{event_slug}_occipital-erp-comparison"
+        f"task-{condition_slug}_desc-{event_slug}_erp-comparison"
     )
     png_path, pdf_path = stem.with_suffix(".png"), stem.with_suffix(".pdf")
     figure.savefig(png_path, dpi=args.dpi, bbox_inches="tight")
@@ -627,6 +657,7 @@ def plot_results(args: argparse.Namespace) -> None:
     dataset = SpellItOutDataset(source_root)
     subjects = _subjects(dataset, args.subjects)
     root = source_output_root(args)
+    _check_method(root, args)
     panels: dict[tuple[str, str], dict[str, object]] = {}
     cohort_rows: list[dict[str, object]] = []
     events = [EVENT_ALIASES.get(event, event) for event in args.events]

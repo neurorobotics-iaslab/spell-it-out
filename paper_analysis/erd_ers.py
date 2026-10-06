@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
-import hashlib
 import json
 import logging
 from pathlib import Path
@@ -27,9 +26,9 @@ from spellitout import SpellItOutDataset
 from spellitout.erd_ers import ERDERSConfig, compute_subject_tfr
 
 
-DEFAULT_BIDS_ROOT = Path("data/spellitout_bids")
-DEFAULT_OUTPUT = Path("per_paper/results/erd_ers")
-CONDITIONS = ("overt", "silent")
+DEFAULT_BIDS_ROOT = Path("data/spellitout")
+DEFAULT_OUTPUT = Path("paper_analysis/results/erd_ers")
+CONDITIONS = ("overt", "covert")
 ERD_BANDS = {
     "Theta": (4.0, 8.0),
     "Alpha": (8.0, 12.0),
@@ -38,14 +37,14 @@ ERD_BANDS = {
     "Low Gamma": (30.0, 45.0),
 }
 TRIAL_WINDOWS = {
-    "LISTEN": (-6.5, -3.5),
-    "REP": (1.0, 5.0),
-    "REP END": (6.0, 7.0),
+    "LISTEN.": (-6.5, -3.5),
+    "REP.": (1.0, 5.0),
+    "REP. END": (6.0, 7.0),
     "DOTS": (7.0, 8.8),
     "SYLL.": (8.8, 20.8),
 }
 
-DEFAULT_BASELINE = (-2.0, -0.1)
+DEFAULT_BASELINE = (-3.0, -0.1)
 
 def optional_float(value: str) -> float | None:
     if value.lower() in {"none", "null", "all"}:
@@ -142,15 +141,28 @@ def _config(args: argparse.Namespace) -> ERDERSConfig:
 
 
 def source_output_root(args: argparse.Namespace) -> Path:
-    payload = json.dumps(
-        {
-            "configuration": asdict(_config(args)),
-            "runs": sorted(set(args.runs)),
-        },
-        sort_keys=True,
-    ).encode("utf-8")
-    digest = hashlib.sha256(payload).hexdigest()[:12]
-    return args.output_path / f"source-{args.source}" / f"tfr-{digest}"
+    return (
+        args.output_path / f"source-{args.source}"
+        / f"event-{_config(args).event_name}"
+        / f"runs-{'-'.join(str(run) for run in sorted(set(args.runs)))}"
+        / f"window-{_number_label(args.tmin)}-{_number_label(args.tmax)}s"
+        / (f"freq-{_number_label(args.fmin)}-{_number_label(args.fmax)}Hz_"
+           f"step-{_number_label(args.fstep)}Hz_sfreq-{_number_label(args.resample_sfreq)}Hz")
+        / (f"cycles-divisor-{_number_label(args.n_cycles_divisor)}_"
+           f"csd-{'off' if args.no_csd else 'on'}_jobs-{args.n_jobs}")
+    )
+
+
+def _check_method(root: Path, args: argparse.Namespace) -> None:
+    path = root / "method.json"
+    if not path.exists():
+        if (root / "epochs_tfr").exists():
+            raise RuntimeError(f"Checkpoint configuration is missing: {path}")
+        return
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    if (metadata["Configuration"] != asdict(_config(args))
+            or metadata.get("Runs") != sorted(set(args.runs))):
+        raise RuntimeError(f"ERD/ERS checkpoint configuration differs from requested parameters: {path}")
 
 
 def checkpoint_path(root: Path, subject: str, condition: str) -> Path:
@@ -246,6 +258,7 @@ def _write_method(
     args: argparse.Namespace,
     config: ERDERSConfig,
 ) -> None:
+    _check_method(root, args)
     root.mkdir(parents=True, exist_ok=True)
     metadata = {
         "Description": "Epoch-level Morlet TFR checkpoints for the paper ERD/ERS analysis.",
@@ -257,9 +270,6 @@ def _write_method(
         ),
         "Configuration": asdict(config),
         "Runs": sorted(set(args.runs)),
-        "ConfigurationSHA256": hashlib.sha256(
-            json.dumps(asdict(config), sort_keys=True).encode("utf-8")
-        ).hexdigest(),
         "BandsHz": ERD_BANDS,
         "PlotWindowsSeconds": TRIAL_WINDOWS,
         "Normalization": "Per-epoch dB baseline correction during aggregation.",
@@ -416,9 +426,7 @@ def analysis_label(args: argparse.Namespace) -> str:
     cohort = (
         "all"
         if args.subjects is None
-        else hashlib.sha256(
-            json.dumps(sorted(set(args.subjects))).encode("utf-8")
-        ).hexdigest()[:8]
+        else "-".join(f"{subject:02d}" for subject in sorted(set(args.subjects)))
     )
     return (
         f"badmax-{_number_label(args.max_bad_duration)}_"
@@ -477,7 +485,7 @@ def plot_comparison(
     vlim: tuple[float, float],
     colorbar_extend: str,
 ) -> plt.Figure:
-    conditions = (("overt", "Overt speech"), ("silent", "Imagined speech"))
+    conditions = (("overt", "Overt speech"), ("covert", "Covert speech"))
     bands = list(ERD_BANDS.items())
     windows = list(TRIAL_WINDOWS.items())
     n_bands, n_windows = len(bands), len(windows)
@@ -534,10 +542,10 @@ def plot_comparison(
             fontweight="bold",
         )
     overt_right = axes[0, n_windows - 1].get_position().x1
-    silent_left = axes[0, n_windows].get_position().x0
+    covert_left = axes[0, n_windows].get_position().x0
     figure.add_artist(
         plt.Line2D(
-            [(overt_right + silent_left) / 2] * 2,
+            [(overt_right + covert_left) / 2] * 2,
             [axes[-1, 0].get_position().y0, axes[0, 0].get_position().y1],
             transform=figure.transFigure,
             color="0.45",
@@ -571,6 +579,7 @@ def plot_results(args: argparse.Namespace) -> None:
     subjects = _subjects(dataset, args.subjects)
     root = source_output_root(args)
     grands: dict[str, mne.time_frequency.AverageTFR] = {}
+    _check_method(root, args)
     selection_rows = []
     for condition in CONDITIONS:
         saved_grand = grand_path(root, args, condition)
@@ -614,7 +623,7 @@ def plot_results(args: argparse.Namespace) -> None:
     figure = plot_comparison(grands, vlim, extend)
     figure_dir = root / "figures" / analysis_label(args)
     figure_dir.mkdir(parents=True, exist_ok=True)
-    output = figure_dir / "erd_ers_overt-vs-silent.png"
+    output = figure_dir / "erd_ers_overt-vs-covert.png"
     figure.savefig(output, dpi=args.dpi, bbox_inches="tight", pad_inches=0.04)
     figure.savefig(output.with_suffix(".svg"), bbox_inches="tight", pad_inches=0.04)
     plt.close(figure)

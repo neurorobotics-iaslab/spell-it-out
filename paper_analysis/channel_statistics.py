@@ -1,4 +1,4 @@
-"""Plot per-channel mean and standard deviation for overt and silent EEG.
+"""Plot per-channel mean and standard deviation for overt and covert EEG.
 
 The output mirrors the layout of the channel-characterization figure used as
 reference: channels are grouped by participant, vertical dotted lines mark
@@ -21,11 +21,11 @@ import mne
 import numpy as np
 
 
-DEFAULT_OUTPUT = Path("per_paper/results/erp")
+DEFAULT_OUTPUT = Path("paper_analysis/results/erp")
 
 MICROVOLTS_PER_VOLT = 1e6
-CONDITIONS = ("overt", "silent")
-CONDITION_COLORS = {"overt": "#e66101", "silent": "#5e3c99"}
+CONDITIONS = ("overt", "covert")
+CONDITION_COLORS = {"overt": "#e66101", "covert": "#5e3c99"}
 
 
 @dataclass(frozen=True)
@@ -175,7 +175,7 @@ def plot_statistics(
     ymin: float | None,
     ymax: float | None,
 ) -> None:
-    """Create and save the two-row overt/silent characterization figure."""
+    """Create and save the two-row overt/covert characterization figure."""
     channel_slots = infer_channel_slots(statistics)
     y_limits = common_y_limits(statistics, ymin, ymax)
     total_slots = len(subjects) * channel_slots
@@ -244,12 +244,12 @@ def parse_args() -> argparse.Namespace:
         "--data-root",
         type=Path,
         default=project_root / "data" / "spellitout",
-        help="Root containing the overt/ and silent/ prepared-data folders.",
+        help="Root containing the overt/ and covert/ prepared-data folders.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=project_root / "paper_images" / "channel_statistics_overt_silent.png",
+        default=project_root / "paper_images" / "channel_statistics_overt_covert.png",
         help="Output image path; a PDF copy is also written for non-PDF output.",
     )
     parser.add_argument(

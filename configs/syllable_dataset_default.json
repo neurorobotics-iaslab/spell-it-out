@@ -3,9 +3,9 @@
   "source": "preprocessed",
   "datasets": [
     {
-      "name": "silent_cue",
-      "description_label": "silentcue",
-      "task": "silent",
+      "name": "covert_cue",
+      "description_label": "covertcue",
+      "task": "covert",
       "event_type": "syllabification_cue",
       "include_audio": false
     },
@@ -30,13 +30,14 @@
     "tmax": 0.6,
     "picks": "eeg",
     "exclude_bad_overlap": true,
-    "bad_annotation_source": "source",
+    "bad_annotation_source": "auto",
     "baseline": null,
     "detrend": null,
     "units": "V",
     "dtype": "float32"
   },
   "preprocessing": {
+    "filter_phase": "causal",
     "l_freq": 2,
     "h_freq": 70,
     "notch_freqs": [50],

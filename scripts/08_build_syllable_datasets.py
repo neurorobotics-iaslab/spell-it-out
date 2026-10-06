@@ -22,7 +22,7 @@ from spellitout.syllable_dataset import (
 )
 
 
-DEFAULT_BIDS_ROOT = Path("data/spellitout_bids")
+DEFAULT_BIDS_ROOT = Path("data/spellitout")
 DEFAULT_CONFIG = Path("configs/syllable_dataset_default.json")
 DEFAULT_PHONETICS = Path("spellitout/spellitout/resources/phonetic_categories.tsv")
 
@@ -46,6 +46,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--datasets", nargs="+", default=None)
     parser.add_argument("--eeg-tmin", type=float, default=None)
     parser.add_argument("--eeg-tmax", type=float, default=None)
+    parser.add_argument(
+        "--exclude-bad-overlap", action=argparse.BooleanOptionalAction, default=None,
+        help="Reject EEG windows overlapping BAD_* spans.",
+    )
+    parser.add_argument(
+        "--bad-annotation-source", choices=("auto", "source", "preprocessed", "none"),
+        default=None,
+        help="auto: reviewed derivative events for raw EEG, source events for preprocessed EEG.",
+    )
+    parser.add_argument(
+        "--filter-phase", choices=("zero", "causal"), default=None,
+        help="Band-pass/notch mode: zero-phase FIR or forward-only Butterworth IIR. Resampling is unchanged.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -67,6 +80,9 @@ def main(args: argparse.Namespace) -> None:
     config = resolve_config(
         load_config(args.config), source=args.source,
         eeg_tmin=args.eeg_tmin, eeg_tmax=args.eeg_tmax,
+        exclude_bad_overlap=args.exclude_bad_overlap,
+        bad_annotation_source=args.bad_annotation_source,
+        filter_phase=args.filter_phase,
     )
     source_root = bids_root if config["source"] == "raw" else preprocessed_root
     paths = BuildPaths(

@@ -78,7 +78,7 @@ def merged_annotation_intervals(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--condition", choices=("overt", "silent"), required=True)
+    parser.add_argument("--condition", choices=("overt", "covert"), required=True)
     parser.add_argument("--subject", type=int, required=True)
     parser.add_argument("--derivatives-path", type=Path, default=Path("derivatives/preprocessing"))
     parser.add_argument("--reviewer", default="")

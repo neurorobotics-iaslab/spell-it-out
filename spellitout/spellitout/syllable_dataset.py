@@ -82,11 +82,23 @@ def load_config(path: str | Path) -> dict[str, Any]:
         for key in ("name", "description_label", "task", "event_type", "include_audio"):
             if key not in item:
                 raise ValueError(f"Dataset entry is missing '{key}'.")
-        if item["task"] not in {"silent", "overt"}:
+        if item["task"] not in {"covert", "overt"}:
             raise ValueError(f"Unsupported task in dataset {item['name']!r}.")
         if item["include_audio"] and item["task"] != "overt":
             raise ValueError("Audio samples are only supported for the overt task.")
+    _validate_processing_options(config)
     return config
+
+
+def _validate_processing_options(config: dict[str, Any]) -> None:
+    if config["eeg"].get("bad_annotation_source", "auto") not in {
+        "auto", "source", "preprocessed", "none"
+    }:
+        raise ValueError("eeg.bad_annotation_source must be auto, source, preprocessed, or none.")
+    if not isinstance(config["eeg"].get("exclude_bad_overlap", True), bool):
+        raise ValueError("eeg.exclude_bad_overlap must be a boolean.")
+    if config["preprocessing"].get("filter_phase", "zero") not in {"zero", "causal"}:
+        raise ValueError("preprocessing.filter_phase must be zero or causal.")
 
 
 def resolve_config(
@@ -95,6 +107,9 @@ def resolve_config(
     source: str | None = None,
     eeg_tmin: float | None = None,
     eeg_tmax: float | None = None,
+    exclude_bad_overlap: bool | None = None,
+    bad_annotation_source: str | None = None,
+    filter_phase: str | None = None,
 ) -> dict[str, Any]:
     """Return a deep copy with explicit CLI overrides applied."""
     resolved = json.loads(json.dumps(config))
@@ -106,6 +121,13 @@ def resolve_config(
         resolved["eeg"]["tmin"] = float(eeg_tmin)
     if eeg_tmax is not None:
         resolved["eeg"]["tmax"] = float(eeg_tmax)
+    if exclude_bad_overlap is not None:
+        resolved["eeg"]["exclude_bad_overlap"] = exclude_bad_overlap
+    if bad_annotation_source is not None:
+        resolved["eeg"]["bad_annotation_source"] = bad_annotation_source
+    if filter_phase is not None:
+        resolved["preprocessing"]["filter_phase"] = filter_phase
+    _validate_processing_options(resolved)
     if float(resolved["eeg"]["tmin"]) >= float(resolved["eeg"]["tmax"]):
         raise ValueError("The resolved EEG window has tmin >= tmax.")
     return resolved
@@ -219,13 +241,15 @@ def _bad_events_for_run(
     run: RunData,
     *,
     mode: str,
-    preprocessed_dataset: SpellItOutDataset,
+    preprocessed_dataset: SpellItOutDataset | None,
 ) -> pd.DataFrame:
     if mode == "none":
         return run.events.iloc[0:0]
     if mode == "source":
         return run.events
     if mode == "preprocessed":
+        if preprocessed_dataset is None:
+            raise ValueError("BAD_* rejection requires the preprocessed dataset.")
         return preprocessed_dataset.get_run(
             subject=run.subject,
             session=run.session or "01",
@@ -255,16 +279,27 @@ def _pick_and_preprocess(raw: mne.io.BaseRaw, config: dict[str, Any]) -> mne.io.
         raise ValueError("eeg.picks must be 'eeg' or a non-empty channel-name list.")
 
     prep = config["preprocessing"]
-    l_freq = prep.get("l_freq")
-    h_freq = prep.get("h_freq")
-    if l_freq is not None or h_freq is not None:
-        raw.filter(l_freq=l_freq, h_freq=h_freq, picks="all", verbose="error")
-    notch = prep.get("notch_freqs", [])
-    if notch:
-        raw.notch_filter(np.asarray(notch, dtype=float), picks="all", verbose="error")
+    _validate_processing_options(config)
     target_sfreq = prep.get("resample_sfreq")
     if target_sfreq is not None and not np.isclose(float(target_sfreq), raw.info["sfreq"]):
         raw.resample(float(target_sfreq), verbose="error")
+    causal = prep.get("filter_phase", "zero") == "causal"
+    filter_options = (
+        {"method": "iir", "iir_params": {"order": 4, "ftype": "butter"}, "phase": "forward"}
+        if causal else {}
+    )
+    l_freq = prep.get("l_freq")
+    h_freq = prep.get("h_freq")
+    if l_freq is not None or h_freq is not None:
+        raw.filter(l_freq=l_freq, h_freq=h_freq, picks="all", verbose="error", **filter_options)
+    notch = prep.get("notch_freqs", [])
+    if notch:
+        if causal:
+            # MNE's IIR notch supports one stop band per call.
+            for frequency in notch:
+                raw.notch_filter([float(frequency)], picks="all", verbose="error", **filter_options)
+        else:
+            raw.notch_filter(np.asarray(notch, dtype=float), picks="all", verbose="error")
     reference = prep.get("reference")
     if reference == "average":
         raw.set_eeg_reference("average", projection=False, verbose="error")
@@ -615,9 +650,18 @@ def build_syllable_datasets(
             item for item in config["datasets"] if item["name"] in wanted
         ]
     source_dataset = SpellItOutDataset(paths.source_root)
-    preprocessed_dataset = SpellItOutDataset(paths.preprocessed_root)
+    _validate_processing_options(config)
+    bad_mode = str(config["eeg"].get("bad_annotation_source", "auto"))
+    if not config["eeg"].get("exclude_bad_overlap", True):
+        bad_mode = "none"
+    elif bad_mode == "auto":
+        bad_mode = "preprocessed" if config["source"] == "raw" else "source"
+    preprocessed_dataset = (
+        SpellItOutDataset(paths.preprocessed_root) if bad_mode == "preprocessed" else None
+    )
     chosen_subjects = _selected_subjects(source_dataset, subjects)
     config["selection"] = {"subjects": [f"sub-{value}" for value in chosen_subjects]}
+    config["preprocessing"]["operation_order"] = ["resample", "bandpass", "notch", "reference"]
     category_names, category_lookup = read_phonetic_categories(phonetic_categories_path)
     digest = config_digest(config)
 
@@ -634,7 +678,6 @@ def build_syllable_datasets(
     eeg_cfg = config["eeg"]
     tmin = float(eeg_cfg["tmin"])
     tmax = float(eeg_cfg["tmax"])
-    bad_mode = str(eeg_cfg.get("bad_annotation_source", "source"))
 
     for subject in chosen_subjects:
         writers: dict[str, _ShardWriter] = {}

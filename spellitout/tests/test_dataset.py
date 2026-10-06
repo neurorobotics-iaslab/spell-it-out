@@ -21,10 +21,10 @@ def test_non_bids_directory_is_rejected(tmp_path):
 
 def test_matching_paths_excludes_nested_derivatives(monkeypatch, tmp_path):
     (tmp_path / "dataset_description.json").write_text("{}", encoding="utf-8")
-    direct = tmp_path / "sub-01" / "eeg" / "sub-01_task-silent_eeg.vhdr"
+    direct = tmp_path / "sub-01" / "eeg" / "sub-01_task-covert_eeg.vhdr"
     derivative = (
         tmp_path / "derivatives" / "preprocessing" / "sub-01" / "eeg"
-        / "sub-01_task-silent_desc-preproc_eeg.vhdr"
+        / "sub-01_task-covert_desc-preproc_eeg.vhdr"
     )
 
     class FakePath:
@@ -51,7 +51,7 @@ def test_bids_discovery_and_loading():
     dataset = SpellItOutDataset(TEST_DATASET)
 
     assert dataset.subjects == ("01",)
-    assert dataset.tasks == ("overt", "silent")
+    assert dataset.tasks == ("overt", "covert")
     assert len(dataset.recordings) == 2
 
     overt = dataset.get_run(subject=1, task="overt", run=1, preload=False)
@@ -68,9 +68,9 @@ def test_bids_discovery_and_loading():
     assert overt.audio_path is not None and overt.audio_path.is_file()
     assert overt.textgrid_path is not None and overt.textgrid_path.is_file()
 
-    silent = dataset.get_run(subject="sub-01", task="silent", run="run-01")
-    assert silent.audio_path is None
-    assert silent.textgrid_path is None
+    covert = dataset.get_run(subject="sub-01", task="covert", run="run-01")
+    assert covert.audio_path is None
+    assert covert.textgrid_path is None
 
 
 @pytest.mark.skipif(
@@ -82,12 +82,12 @@ def test_iter_runs_filters_and_uses_stable_order():
     runs = list(
         dataset.iter_runs(
             subjects=[1],
-            tasks=["silent", "overt"],
+            tasks=["covert", "overt"],
             runs=[1],
             preload=False,
         )
     )
     assert [run.run_id for run in runs] == [
         "sub-01_ses-01_task-overt_run-01",
-        "sub-01_ses-01_task-silent_run-01",
+        "sub-01_ses-01_task-covert_run-01",
     ]

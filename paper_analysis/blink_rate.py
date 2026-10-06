@@ -2,7 +2,7 @@
 
 This replaces the former two-step ``08_blink_rate.py`` and ``blinkrate.py``
 workflow. It reads the reviewed preprocessing workspace and writes consolidated
-analysis tables plus article-ready wide TSV tables below ``per_paper/results``.
+analysis tables plus article-ready wide TSV tables below ``paper_analysis/results``.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from spellitout.blink_rate import (
 from spellitout.review_qc import discover_review_records
 
 
-DEFAULT_OUTPUT = Path("per_paper/results/blink_rate")
+DEFAULT_OUTPUT = Path("paper_analysis/results/blink_rate")
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,8 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--conditions",
         nargs="+",
-        choices=("silent", "overt"),
-        default=("silent", "overt"),
+        choices=("covert", "overt"),
+        default=("covert", "overt"),
     )
     parser.add_argument(
         "--subjects",

@@ -15,7 +15,7 @@ from spellitout.utils import get_run_id, get_subject_id
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--condition", choices=("overt", "silent"), required=True)
+    parser.add_argument("--condition", choices=("overt", "covert"), required=True)
     parser.add_argument("--subjects", type=int, nargs="+", required=True)
     parser.add_argument(
         "--runs",

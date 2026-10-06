@@ -202,9 +202,9 @@ def test_minimal_preprocessing_keeps_candidates_and_writes_checkpoint(tmp_path):
         minimal_raw,
         candidates,
         tmp_path / "sub-01" / "ses-01" / "eeg",
-        "sub-01_ses-01_task-silent_run-01",
+        "sub-01_ses-01_task-covert_run-01",
         config,
-        source={"subject": "sub-01", "task": "silent", "run": "run-1"},
+        source={"subject": "sub-01", "task": "covert", "run": "run-1"},
         overwrite=True,
     )
 
@@ -255,7 +255,7 @@ def test_prep_qc_writes_evidence_without_interpolating(tmp_path):
         raw,
         report,
         tmp_path,
-        "sub-01_ses-01_task-silent_run-01",
+        "sub-01_ses-01_task-covert_run-01",
         tmp_path / "input.fif",
         overwrite=True,
     )

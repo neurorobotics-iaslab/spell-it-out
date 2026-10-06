@@ -6,7 +6,7 @@ derivative below the raw BIDS dataset unless ``--output-path`` is supplied.
 Examples
 --------
 python scripts/07_export_preprocessed.py validate
-python scripts/07_export_preprocessed.py validate --subjects 01 --tasks silent --runs 01
+python scripts/07_export_preprocessed.py validate --subjects 01 --tasks covert --runs 01
 python scripts/07_export_preprocessed.py apply
 python scripts/07_export_preprocessed.py apply --overwrite
 """
@@ -24,7 +24,7 @@ from spellitout.publishing import (
 )
 
 
-DEFAULT_BIDS_ROOT = Path("data/spellitout_bids")
+DEFAULT_BIDS_ROOT = Path("data/spellitout")
 DEFAULT_WORKING_DERIVATIVES = Path("derivatives/preprocessing")
 
 
@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--subjects", nargs="+", default=None)
-    parser.add_argument("--tasks", nargs="+", choices=("overt", "silent"), default=None)
+    parser.add_argument("--tasks", nargs="+", choices=("overt", "covert"), default=None)
     parser.add_argument("--runs", nargs="+", default=None)
     parser.add_argument("--pipeline-version", default=None)
     parser.add_argument("--code-url", default=None)

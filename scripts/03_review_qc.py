@@ -16,7 +16,7 @@ from spellitout.review_qc import QCReviewApplication, discover_review_records
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--condition", choices=("overt", "silent"), required=True)
+    parser.add_argument("--condition", choices=("overt", "covert"), required=True)
     parser.add_argument("--subjects", type=int, nargs="+", required=True)
     parser.add_argument("--runs", type=int, nargs="+", default=(1, 2, 3))
     parser.add_argument(

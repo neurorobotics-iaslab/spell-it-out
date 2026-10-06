@@ -6,7 +6,7 @@ are calibrated against reviewed muscle candidates where possible. Amplitude
 thresholds use a robust empirical tail because reviewed amplitude examples
 are too sparse for supervised calibration.
 
-Outputs are confined to per_paper/blinkrate/artifact_detection and do not
+Outputs are confined to paper_analysis/blinkrate/artifact_detection and do not
 change raw data or reviewed annotations.
 """
 
@@ -26,7 +26,7 @@ from scipy.signal import resample_poly
 
 
 LOG = logging.getLogger("blinkrate_artifacts")
-DEFAULT_ROOT = Path("per_paper/blinkrate/artifact_detection")
+DEFAULT_ROOT = Path("paper_analysis/blinkrate/artifact_detection")
 MIN_REVIEWED_PER_CLASS = 10
 EEG_EXCLUDE = {"AF7", "AF8"}
 INTERVAL_COLUMNS = (
@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--review-path", type=Path, default=Path("derivatives/preprocessing"))
     parser.add_argument("--output-path", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument("--conditions", nargs="+", choices=("silent", "overt"), default=("silent", "overt"))
+    parser.add_argument("--conditions", nargs="+", choices=("covert", "overt"), default=("covert", "overt"))
     parser.add_argument("--subjects", type=int, nargs="+", default=None)
     parser.add_argument("--runs", type=int, nargs="+", default=(1, 2, 3))
     parser.add_argument("--analysis-sfreq", type=float, default=512.0)

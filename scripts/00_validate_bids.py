@@ -7,9 +7,9 @@ reproducibility. Install Deno from https://deno.com/ or with conda-forge.
 Examples
 --------
 python scripts/00_validate_bids.py
-python scripts/00_validate_bids.py data/spellitout_bids
+python scripts/00_validate_bids.py data/spellitout
 python scripts/00_validate_bids.py -- --verbose
-python scripts/00_validate_bids.py data/spellitout_bids -- --verbose
+python scripts/00_validate_bids.py data/spellitout -- --verbose
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ def preflight_dataset(dataset: Path) -> None:
         )
 
     split_task_directories = [
-        name for name in ("overt", "silent") if (dataset / name).is_dir()
+        name for name in ("overt", "covert") if (dataset / name).is_dir()
     ]
     if split_task_directories:
         joined = ", ".join(split_task_directories)

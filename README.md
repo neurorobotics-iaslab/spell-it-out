@@ -2,7 +2,7 @@
 
 Spell-IT-OUT is an EEG dataset for imagined and overt production of Italian
 syllables. The canonical raw dataset follows BIDS and stores the `overt` and
-`silent` tasks below one dataset root.
+`covert` tasks below one dataset root.
 
 ## Dataset access
 
@@ -11,8 +11,8 @@ The local Python package provides a BIDS-native loader built on MNE-BIDS:
 ```python
 from spellitout import SpellItOutDataset
 
-dataset = SpellItOutDataset("data/spellitout_bids")
-run = dataset.get_run(subject=1, task="silent", run=1)
+dataset = SpellItOutDataset("data/spellitout")
+run = dataset.get_run(subject=1, task="covert", run=1)
 print(run.raw, run.events)
 ```
 
@@ -25,9 +25,9 @@ channel interpolation or ICA:
 
 ```bash
 python scripts/01_preprocess.py \
-  --condition silent \
+  --condition covert \
   --subjects 1 \
-  --data-path data/spellitout_bids \
+  --data-path data/spellitout \
   --overwrite
 ```
 

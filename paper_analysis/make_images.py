@@ -18,7 +18,7 @@ from spellitout.it_phonetics import (PhoneticCategory, calc_phone_freq,
                                      string2phonlist)
 
 dataset = SpellItOutDataset()
-IMAGES_PATH = Path(__file__).parent / 'images'
+IMAGES_PATH = Path(__file__).parent / 'results' / 'other_images'
 
 bg_color = "#f8f7f2"
 
