@@ -256,7 +256,12 @@ python paper_analysis/blink_rate.py \
   --overwrite
 ```
 
-The utility reads reviewed run-level annotations and writes `run_level.tsv`,
+The utility reads the BIDS derivative at
+`data/spellitout/derivatives/preprocessing` (override with `--derivatives-path`).
+It counts retained `BLINK`/`MANUAL_BLINK` events from `desc-preproc_events.tsv`
+and uses the published `qc/*/ses-*/eeg/*_desc-annotationsqc.tsv` tables for
+review diagnostics. It does not require the working FIF checkpoints.
+It writes `run_level.tsv`,
 `subject_phase.tsv`, `method.json`, and one article-ready wide table per task
 (`mean_blink_rate_task-<task>.tsv`) below `paper_analysis/results/blink_rate`.
 Dismissed blinks are excluded. The

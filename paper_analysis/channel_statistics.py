@@ -18,10 +18,13 @@ from typing import Iterable
 
 import matplotlib.pyplot as plt
 import mne
+from mne_bids import BIDSPath, read_raw_bids
 import numpy as np
 
+from spellitout import SpellItOutDataset
 
-DEFAULT_OUTPUT = Path("paper_analysis/results/erp")
+
+DEFAULT_OUTPUT = Path("paper_analysis/results/channel_statistics")
 
 MICROVOLTS_PER_VOLT = 1e6
 CONDITIONS = ("overt", "covert")
@@ -63,7 +66,7 @@ def _merge_moments(
 
 
 def compute_channel_statistics(
-    files: Iterable[Path], chunk_seconds: float
+    files: Iterable[BIDSPath], chunk_seconds: float
 ) -> ChannelStatistics | None:
     """Pool EEG samples across files and return channel-wise statistics."""
     files = tuple(files)
@@ -76,7 +79,7 @@ def compute_channel_statistics(
     m2 = np.empty(0, dtype=float)
 
     for file_path in files:
-        raw = mne.io.read_raw_fif(file_path, preload=False, verbose="error")
+        raw = read_raw_bids(file_path, extra_params={"preload": False}, verbose="error")
         picks = mne.pick_types(raw.info, eeg=True, eog=False, exclude=[])
         run_channels = tuple(raw.ch_names[index] for index in picks)
 
@@ -111,13 +114,14 @@ def compute_channel_statistics(
 def collect_statistics(
     data_root: Path, subjects: tuple[str, ...], chunk_seconds: float
 ) -> dict[str, dict[str, ChannelStatistics | None]]:
-    """Collect condition/participant summaries from the prepared FIF tree."""
+    """Collect condition/participant summaries from a BIDS dataset."""
+    recordings = SpellItOutDataset(data_root).recordings
     results: dict[str, dict[str, ChannelStatistics | None]] = {}
     for condition in CONDITIONS:
         results[condition] = {}
         for subject in subjects:
-            pattern_root = data_root / condition / subject
-            files = sorted(pattern_root.rglob("*_eeg.fif")) if pattern_root.exists() else []
+            files = [path for path in recordings
+                     if path.task == condition and f"sub-{path.subject}" == subject]
             print(f"{condition:6s} {subject}: {len(files)} run(s)", flush=True)
             results[condition][subject] = compute_channel_statistics(
                 files, chunk_seconds
@@ -136,7 +140,7 @@ def infer_channel_slots(
         if summary is not None
     }
     if not counts:
-        raise RuntimeError("No EEG FIF files were found.")
+        raise RuntimeError("No BIDS EEG recordings were found.")
     if len(counts) != 1:
         raise ValueError(f"Participants do not share one EEG channel count: {counts}")
     return counts.pop()
@@ -243,13 +247,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-root",
         type=Path,
-        default=project_root / "data" / "spellitout",
-        help="Root containing the overt/ and covert/ prepared-data folders.",
+        default=project_root / "data" / "spellitout" / "derivatives" / "preprocessing",
+        help="BIDS dataset root; defaults to the final preprocessing derivative.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=project_root / "paper_images" / "channel_statistics_overt_covert.png",
+        default=project_root / DEFAULT_OUTPUT / "channel_statistics_overt_covert.png",
         help="Output image path; a PDF copy is also written for non-PDF output.",
     )
     parser.add_argument(
@@ -270,7 +274,7 @@ def main() -> None:
     if args.ymin is not None and args.ymax is not None and args.ymin >= args.ymax:
         raise ValueError("--ymin must be smaller than --ymax.")
 
-    subjects = tuple(f"sub-{number:02d}" for number in range(1, 26))
+    subjects = tuple(f"sub-{subject}" for subject in SpellItOutDataset(args.data_root).subjects)
     statistics = collect_statistics(args.data_root, subjects, args.chunk_seconds)
     plot_statistics(statistics, subjects, args.output, args.ymin, args.ymax)
     print(f"Saved figure to {args.output}")

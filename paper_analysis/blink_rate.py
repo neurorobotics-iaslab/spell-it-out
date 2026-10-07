@@ -1,7 +1,7 @@
 """Compute and aggregate reviewed blink rates for the paper.
 
 This replaces the former two-step ``08_blink_rate.py`` and ``blinkrate.py``
-workflow. It reads the reviewed preprocessing workspace and writes consolidated
+workflow. It reads the  BIDS preprocessing derivative and writes consolidated
 analysis tables plus article-ready wide TSV tables below ``paper_analysis/results``.
 """
 
@@ -20,7 +20,7 @@ from spellitout.blink_rate import (
     run_blink_rate_rows,
     write_blinkrate_sidecar,
 )
-from spellitout.review_qc import discover_review_records
+from spellitout import SpellItOutDataset
 
 
 DEFAULT_OUTPUT = Path("paper_analysis/results/blink_rate")
@@ -45,8 +45,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--derivatives-path",
         type=Path,
-        default=Path("derivatives/preprocessing"),
-        help="Reviewed preprocessing workspace containing the QC tables.",
+        default=Path("data/spellitout/derivatives/preprocessing"),
+        help="Published BIDS preprocessing derivative root (not its qc/ subdirectory).",
     )
     parser.add_argument("--output-path", type=Path, default=DEFAULT_OUTPUT)
     bad_span_policy = parser.add_mutually_exclusive_group()
@@ -82,11 +82,7 @@ def parse_args() -> argparse.Namespace:
 def _subjects(args: argparse.Namespace) -> list[int]:
     if args.subjects is not None:
         return sorted(set(args.subjects))
-    subjects = sorted(
-        int(path.name.removeprefix("sub-"))
-        for path in args.derivatives_path.glob("sub-*")
-        if path.is_dir() and path.name.removeprefix("sub-").isdigit()
-    )
+    subjects = [int(subject) for subject in SpellItOutDataset(args.derivatives_path).subjects]
     if not subjects:
         raise FileNotFoundError(
             f"No subject directories found below {args.derivatives_path}."
@@ -97,30 +93,47 @@ def _subjects(args: argparse.Namespace) -> list[int]:
 def compute_run_table(args: argparse.Namespace) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     logger = logging.getLogger("spellitout.paper.blink_rate")
+    dataset = SpellItOutDataset(args.derivatives_path)
+    if dataset.dataset_type != "derivative":
+        raise ValueError("--derivatives-path must point to the final preprocessing derivative.")
+    subjects = _subjects(args)
     for condition in args.conditions:
-        for subject in _subjects(args):
+        for subject in subjects:
             try:
-                records = discover_review_records(
-                    args.derivatives_path,
-                    condition,
-                    [subject],
-                    args.runs,
-                )
+                records = list(dataset.iter_runs(
+                    subjects=subject, tasks=condition, runs=args.runs, preload=False,
+                ))
             except FileNotFoundError as error:
                 logger.warning(
                     "Skipping sub-%02d task %s: %s", subject, condition, error
                 )
                 continue
             for record in records:
-                rows.extend(
-                    run_blink_rate_rows(
-                        record,
-                        exclude_bad_spans=args.exclude_bad_spans,
-                        minimum_blink_separation_seconds=(
-                            args.min_blink_separation_ms / 1000.0
-                        ),
-                    )
+                base = (
+                    f"{record.subject_id}_ses-{record.session}_task-{record.task}"
+                    f"_run-{record.run}"
                 )
+                qc_path = (
+                    dataset.root / "qc" / record.subject_id / f"ses-{record.session}"
+                    / "eeg" / f"{base}_desc-annotationsqc.tsv"
+                )
+                annotations_qc = (
+                    pd.read_csv(qc_path, sep="\t", keep_default_na=False)
+                    if qc_path.is_file() else None
+                )
+                try:
+                    rows.extend(
+                        run_blink_rate_rows(
+                            record,
+                            annotations_qc=annotations_qc,
+                            exclude_bad_spans=args.exclude_bad_spans,
+                            minimum_blink_separation_seconds=(
+                                args.min_blink_separation_ms / 1000.0
+                            ),
+                        )
+                    )
+                finally:
+                    record.raw.close()
     if not rows:
         raise RuntimeError("No blink-rate rows were generated.")
     return pd.DataFrame(rows, columns=BLINKRATE_COLUMNS)
@@ -217,7 +230,7 @@ def main(args: argparse.Namespace) -> None:
         "runs": list(args.runs),
         "exclude_bad_spans": args.exclude_bad_spans,
         "minimum_blink_separation_ms": args.min_blink_separation_ms,
-        "reviewed_preprocessing_path": str(args.derivatives_path),
+        "preprocessed_bids_root": str(args.derivatives_path.resolve()),
     }
     method["ArticleTables"] = {
         "Description": (

@@ -3,26 +3,16 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import mne
 import numpy as np
 import pandas as pd
 
-from .review_qc import ReviewRecord, read_review_tables
+from .dataset import RunData
 
 
 PHASES = ("run", "sentence_listening", "sentence_repetition", "syllabification")
-_LABEL_RE = re.compile(r"(?P<key>sub|ses|task|run)-(?P<value>[^_]+)")
-
-
-def _record_entities(record: ReviewRecord) -> dict[str, str]:
-    entities = {}
-    for match in _LABEL_RE.finditer(record.label):
-        key, value = match.group("key"), match.group("value")
-        entities[key] = f"{key}-{value}" if key in {"sub", "ses"} else value
-    return entities
 
 
 def _event_intervals(raw: mne.io.BaseRaw, description: str) -> list[tuple[float, float]]:
@@ -70,7 +60,7 @@ def _syllabification_intervals(
 def phase_intervals(raw: mne.io.BaseRaw) -> tuple[dict[str, list[tuple[float, float]]], int]:
     syllabification, n_syllabification_cues = _syllabification_intervals(raw)
     return {
-        "run": [(0.0, float(raw.times[-1]))],
+        "run": [(0.0, raw.n_times / float(raw.info["sfreq"]))],
         "sentence_listening": _event_intervals(raw, "listening_cue"),
         "sentence_repetition": _event_intervals(raw, "repetition_cue"),
         "syllabification": syllabification,
@@ -131,27 +121,35 @@ def enforce_minimum_blink_separation(
 
 
 def run_blink_rate_rows(
-    record: ReviewRecord,
+    record: RunData,
     *,
+    annotations_qc: pd.DataFrame | None = None,
     exclude_bad_spans: bool = False,
     minimum_blink_separation_seconds: float = 0.150,
 ) -> list[dict[str, object]]:
-    """Compute four phase rows for one reviewed run."""
-    entities = _record_entities(record)
-    raw = mne.io.read_raw_fif(record.raw_path, preload=False, verbose="error")
-    annotations, _ = read_review_tables(record)
+    """Compute phase rates from published events; QC supplies review diagnostics."""
+    raw = record.raw
     intervals_by_phase, n_syllabification_cues = phase_intervals(raw)
-    blink_centres, n_unreviewed, n_dismissed = _reviewed_blinks(annotations)
+    events = record.events
+    labels = events["trial_type"].astype(str).str.upper()
+    blink_rows = events.loc[labels.isin(("BLINK", "MANUAL_BLINK"))]
+    blink_centres = (
+        blink_rows["onset"].to_numpy(dtype=float)
+        + blink_rows["duration"].to_numpy(dtype=float) / 2.0
+    )
+    # Published events contain accepted annotations only. Retain audit counts
+    # when the publication includes its complete QC table.
+    n_unreviewed = 0
+    n_dismissed = np.nan
+    if annotations_qc is not None:
+        _, n_unreviewed, n_dismissed = _reviewed_blinks(annotations_qc)
     blink_centres, n_suppressed = enforce_minimum_blink_separation(
         blink_centres,
         minimum_blink_separation_seconds,
     )
     bad_spans = []
     if exclude_bad_spans:
-        bad_rows = annotations.loc[
-            annotations["review_status"].eq("approved_bad")
-            & annotations["reviewed_description"].astype(str).str.startswith("BAD_")
-        ]
+        bad_rows = events.loc[labels.str.startswith("BAD_")]
         bad_spans = [
             (float(row.onset), float(row.onset + row.duration))
             for row in bad_rows.itertuples()
@@ -170,10 +168,10 @@ def run_blink_rate_rows(
         )
         rows.append(
             {
-                "subject": entities.get("sub", ""),
-                "session": entities.get("ses", ""),
-                "task": entities.get("task", ""),
-                "run": entities.get("run", ""),
+                "subject": record.subject_id,
+                "session": f"ses-{record.session}" if record.session else "",
+                "task": record.task,
+                "run": record.run or "",
                 "phase": phase,
                 "phase_duration_s": duration,
                 "valid_duration_s": valid_duration,
@@ -213,13 +211,14 @@ def write_blinkrate_sidecar(
     path = output_root / filename
     metadata = {
         "Description": "Reviewed spontaneous eye-blink counts and rates by run and task phase.",
-        "blink_count": "Number of reviewed BLINK annotation centres within the phase.",
+        "blink_count": "Number of published BLINK or MANUAL_BLINK event centres within the phase.",
         "blink_rate_per_min": "blink_count divided by valid_duration_s, multiplied by 60.",
         "n_syllabification_cues": (
             "Number of syllabification_cue events contributing to the "
             "syllabification phase; zero for all other phases."
         ),
-        "review_complete": "False when one or more BLINK annotations in the run remain unreviewed.",
+        "review_complete": "False when the published QC table reports unreviewed blink candidates; otherwise published events are treated as reviewed.",
+        "n_dismissed_blinks": "Dismissed blink candidates in the published QC table; unavailable when that table is absent.",
         "bad_spans_excluded": "Whether approved BAD_* spans were removed from duration and blink counting.",
         "PhaseDefinitions": {
             "run": "Complete run interval.",
@@ -227,7 +226,7 @@ def write_blinkrate_sidecar(
             "sentence_repetition": "Each repetition_cue interval, aggregated per run.",
             "syllabification": "Each consecutive syllabification_cue block, aggregated per run.",
         },
-        "CountRule": "BLINK annotations with review_status keep or unreviewed are counted; dismissed annotations are excluded.",
+        "CountRule": "Count BLINK and MANUAL_BLINK from the final desc-preproc_events.tsv; QC candidates are never added to the published events.",
         "MinimumBlinkSeparation": "Events with centres closer than the configured minimum separation are counted once; source annotations are not modified.",
     }
     path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
