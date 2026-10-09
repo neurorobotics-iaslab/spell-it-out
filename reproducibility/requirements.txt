@@ -1,0 +1,16 @@
+# Install the core first: python -m pip install -e ./spellitout
+numpy
+pandas
+mne 
+mne-bids
+pybv>=0.7.5
+pyprep
+mne-icalabel
+h5py
+scipy
+soundfile
+matplotlib
+seaborn
+Pillow
+tqdm
+wordcloud

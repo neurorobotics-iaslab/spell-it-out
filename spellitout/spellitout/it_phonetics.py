@@ -3,7 +3,6 @@ from functools import lru_cache
 from importlib.resources import files
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 
@@ -159,21 +158,6 @@ def string2phonlist(text):
     if type(text) == str:
         text = text.replace('.','').replace(' ','')
     return [ItalianPhonemes[phoneme].value for phoneme in text]
-
-def calc_phonesyll_freq(sentence_list):
-    all_phones = [p for s in sentence_list for w in split_into_phonemes(s).split() for p in w.split('.')]
-    # all_phones = np.concatenate([split_into_phonemes(sentence) for sentence in sentence_list])
-    phones,counts = np.unique(all_phones,return_counts=True)
-    sorted_idx = np.argsort(counts)[::-1]
-    phones = phones[sorted_idx]
-    counts = counts[sorted_idx]
-    return phones,counts
-
-def calc_phone_freq(sentence_list):
-    all_phones = [p for s in sentence_list for w in split_into_phonemes(s).split() for p in w.replace('.','').replace(' ','')]
-    # all_phones = np.concatenate([split_into_phonemes(sentence) for sentence in sentence_list])
-    phones,counts = np.unique(all_phones,return_counts=True)
-    return phones,counts
 
 def split_into_phonemes(text):
     # Replace punctuation with space

@@ -1,6 +1,11 @@
 # spellitout
 
-A Python package for working with the Spell-IT-OUT EEG dataset and related utilities.
+A core Python package for accessing the Spell-IT-OUT EEG dataset and its
+phonetic resources. Processing, QC/ICA review, publication exports, and paper
+analyses are provided separately under `reproducibility/` in the repository.
+
+Generic helpers `make_montage()` and `epoch_data()` remain available in
+`spellitout.utils`. Subject and run identifiers are exposed by `RunData`.
 
 ## Installation
 
@@ -23,6 +28,19 @@ run = dataset.get_run(subject=1, task="overt", run=1, preload=False)
 print(run.raw)
 print(run.events)
 print(run.audio_path)
+```
+
+`get_run()` and `iter_runs()` return lightweight `RunData` descriptors. Listing
+run IDs and paths does not open EEG recordings or read event tables. `run.raw`
+opens the recording on first access; `run.events` independently reads and
+validates the events TSV. Both results are cached for subsequent accesses.
+`preload=True` loads EEG samples only when `run.raw` is first accessed.
+Missing files and malformed events are reported when their content is accessed,
+not while listing runs. Printing a descriptor does not load its content.
+
+```python
+for run in dataset.iter_runs(tasks="covert"):
+    print(run.run_id, run.events_path)  # Metadata only; no raw/event loading.
 ```
 
 For sequential processing, iterate over matching runs

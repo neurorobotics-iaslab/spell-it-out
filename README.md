@@ -6,7 +6,17 @@ syllables. The canonical raw dataset follows BIDS and stores the `overt` and
 
 ## Dataset access
 
-The local Python package provides a BIDS-native loader built on MNE-BIDS:
+The installable core package provides BIDS-native dataset access and phonetic
+resources. Processing and paper analyses live separately in `reproducibility/`.
+Install the core and paper dependencies from the repository root:
+
+```bash
+python -m pip install ./spellitout
+python -m pip install -r reproducibility/requirements.txt
+```
+
+Launch pipeline commands with `python -m reproducibility.scripts.<name>` from
+that same root. The dataset loader is built on MNE-BIDS:
 
 ```python
 from spellitout import SpellItOutDataset
@@ -24,7 +34,7 @@ stage creates independent run-level minimal-processing derivatives without
 channel interpolation or ICA:
 
 ```bash
-python scripts/01_preprocess.py \
+python -m reproducibility.scripts.01_preprocess \
   --condition covert \
   --subjects 1 \
   --data-path data/spellitout \
@@ -38,8 +48,8 @@ After all QC and ICA decisions have been reviewed, validate and create the
 publication-ready BIDS derivative with:
 
 ```bash
-python scripts/07_export_preprocessed.py validate
-python scripts/07_export_preprocessed.py apply
+python -m reproducibility.scripts.07_export_preprocessed validate
+python -m reproducibility.scripts.07_export_preprocessed apply
 ```
 
 ## Syllable-segment datasets
@@ -50,12 +60,12 @@ complete input inventory without writing anything, then apply the canonical
 configuration:
 
 ```bash
-python scripts/08_build_syllable_datasets.py validate
-python scripts/08_build_syllable_datasets.py apply
+python -m reproducibility.scripts.08_build_syllable_datasets validate
+python -m reproducibility.scripts.08_build_syllable_datasets apply
 ```
 
 The defaults are defined in
-[`configs/syllable_dataset_default.json`](configs/syllable_dataset_default.json).
+[`reproducibility/configs/syllable_dataset_default.json`](reproducibility/configs/syllable_dataset_default.json).
 CLI options can select raw or preprocessed continuous data and override the EEG
 window. The HDF5 outputs are explicitly **BIDS-derived analysis artifacts**, not
 standard BIDS EEG files; each sample remains traceable through the manifest and

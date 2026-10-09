@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -42,16 +42,80 @@ def _labels(
     return [_label(value, entity) for value in values]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class RunData:
-    """One loaded BIDS EEG recording and its Spell-IT-OUT metadata."""
+    """A BIDS recording whose raw and events are loaded on first access.
+
+    Metadata and paths are available without opening the recording. Each
+    property caches its result independently. ``preload`` controls loading EEG
+    samples when ``raw`` is accessed, not when this descriptor is constructed.
+    File-reading errors are raised when the corresponding property is accessed.
+    """
 
     bids_path: BIDSPath
-    raw: mne.io.BaseRaw
-    events: pd.DataFrame
     events_path: Path
     audio_path: Path | None = None
     textgrid_path: Path | None = None
+    preload: bool = False
+    _raw: mne.io.BaseRaw | None = field(default=None, repr=False, compare=False)
+    _events: pd.DataFrame | None = field(default=None, repr=False, compare=False)
+
+    def __init__(
+        self,
+        bids_path: BIDSPath,
+        raw: mne.io.BaseRaw | None = None,
+        events: pd.DataFrame | None = None,
+        events_path: str | Path | None = None,
+        audio_path: Path | None = None,
+        textgrid_path: Path | None = None,
+        *,
+        preload: bool = False,
+    ):
+        self.bids_path = bids_path
+        self.events_path = (
+            Path(events_path)
+            if events_path is not None
+            else Path(bids_path.copy().update(suffix="events", extension=".tsv").fpath)
+        )
+        self.audio_path = audio_path
+        self.textgrid_path = textgrid_path
+        self.preload = preload
+        self._raw = raw
+        self._events = events
+
+    @property
+    def raw(self) -> mne.io.BaseRaw:
+        """Open the BIDS recording once, respecting the requested preload mode."""
+        if self._raw is None:
+            self._raw = read_raw_bids(
+                self.bids_path,
+                extra_params={"preload": self.preload},
+                verbose="error",
+            )
+        return self._raw
+
+    @raw.setter
+    def raw(self, value: mne.io.BaseRaw) -> None:
+        self._raw = value
+
+    @property
+    def events(self) -> pd.DataFrame:
+        """Read and validate the events TSV once, without opening the EEG."""
+        if self._events is None:
+            if not self.events_path.is_file():
+                raise FileNotFoundError(f"Events table not found: {self.events_path}")
+            events = pd.read_csv(self.events_path, sep="\t", keep_default_na=False)
+            missing = [column for column in REQUIRED_EVENT_COLUMNS if column not in events]
+            if missing:
+                raise ValueError(
+                    f"{self.events_path} is missing required columns: {', '.join(missing)}"
+                )
+            self._events = events
+        return self._events
+
+    @events.setter
+    def events(self, value: pd.DataFrame) -> None:
+        self._events = value
 
     @property
     def subject(self) -> str:
@@ -170,11 +234,6 @@ class SpellItOutDataset:
             keep_default_na=False,
         )
 
-    def _events_path(self, bids_path: BIDSPath) -> Path:
-        return Path(
-            bids_path.copy().update(suffix="events", extension=".tsv").fpath
-        )
-
     def _source_paths(self, bids_path: BIDSPath) -> tuple[Path | None, Path | None]:
         session = f"ses-{bids_path.session}" if bids_path.session else None
         source_dir = self.root / "sourcedata" / f"sub-{bids_path.subject}"
@@ -189,29 +248,13 @@ class SpellItOutDataset:
             textgrid if textgrid.is_file() else None,
         )
 
-    def _load(self, bids_path: BIDSPath, *, preload: bool) -> RunData:
-        events_path = self._events_path(bids_path)
-        if not events_path.is_file():
-            raise FileNotFoundError(f"Events table not found: {events_path}")
-        events = pd.read_csv(events_path, sep="\t", keep_default_na=False)
-        missing = [column for column in REQUIRED_EVENT_COLUMNS if column not in events]
-        if missing:
-            raise ValueError(
-                f"{events_path} is missing required columns: {', '.join(missing)}"
-            )
-        raw = read_raw_bids(
-            bids_path,
-            extra_params={"preload": preload},
-            verbose="error",
-        )
+    def _make_run(self, bids_path: BIDSPath, *, preload: bool) -> RunData:
         audio_path, textgrid_path = self._source_paths(bids_path)
         return RunData(
             bids_path=bids_path,
-            raw=raw,
-            events=events,
-            events_path=events_path,
             audio_path=audio_path,
             textgrid_path=textgrid_path,
+            preload=preload,
         )
 
     def iter_runs(
@@ -223,7 +266,10 @@ class SpellItOutDataset:
         runs: str | int | Iterable[str | int] | None = None,
         preload: bool = False,
     ) -> Iterator[RunData]:
-        """Yield matching recordings one at a time."""
+        """Yield descriptors without opening EEG files or reading event tables.
+
+        ``preload`` is applied only on the first access to each run's ``raw``.
+        """
         paths = self._matching_paths(
             subjects=subjects,
             sessions=sessions,
@@ -233,7 +279,7 @@ class SpellItOutDataset:
         if not paths:
             raise FileNotFoundError("No EEG recordings match the requested BIDS entities.")
         for path in paths:
-            yield self._load(path, preload=preload)
+            yield self._make_run(path, preload=preload)
 
     def get_run(
         self,
@@ -244,7 +290,7 @@ class SpellItOutDataset:
         session: str | int = "01",
         preload: bool = False,
     ) -> RunData:
-        """Load exactly one recording selected by its BIDS entities."""
+        """Select one recording without loading its raw or events yet."""
         paths = self._matching_paths(
             subjects=subject,
             sessions=session,
@@ -261,4 +307,4 @@ class SpellItOutDataset:
         if len(paths) != 1:
             matches = "\n".join(f"- {path.fpath}" for path in paths)
             raise RuntimeError(f"Expected one EEG recording, found:\n{matches}")
-        return self._load(paths[0], preload=preload)
+        return self._make_run(paths[0], preload=preload)

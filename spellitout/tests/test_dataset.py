@@ -1,3 +1,4 @@
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -33,7 +34,8 @@ def test_matching_paths_excludes_nested_derivatives(monkeypatch, tmp_path):
             self.description = description
 
     monkeypatch.setattr(
-        "spellitout.spellitout.dataset.find_matching_paths",
+        import_module(SpellItOutDataset.__module__),
+        "find_matching_paths",
         lambda *args, **kwargs: [
             FakePath(derivative, "preproc"), FakePath(direct, None)
         ],

@@ -13,14 +13,6 @@ dependencies = [
   "pandas>=1.5",
   "mne>=1.6",
   "mne-bids>=0.17",
-  "pybv>=0.7.5",
-  "pyprep>=0.7",
-  "mne-icalabel>=0.7",
-  "h5py>=3.8",
-  "scipy>=1.10",
-  "soundfile>=0.12",
-  "matplotlib>=3.7",
-  "textgrid>=1.6.1",
 ]
 
 [tool.setuptools]
@@ -32,4 +24,4 @@ include = ["spellitout*"]
 
 [tool.setuptools.package-data]
 "spellitout" = ["resources/*"]
-"spellitout.resources" = ["*.tsv", "*.yaml"]
+"spellitout.resources" = ["*.tsv"]

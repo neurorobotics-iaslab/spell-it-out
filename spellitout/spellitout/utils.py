@@ -1,38 +1,5 @@
 import numpy as np
 from mne.channels import make_dig_montage, make_standard_montage
-from mne.io import RawArray
-
-def get_subject_id(subject_id):
-    """
-    Converts an integer subject ID to a string in the format 'sub-XX'.
-    Args:
-        subject_id (int): Subject ID as an integer.
-    Returns:
-        str: Subject ID in the format 'sub-XX'.
-    """
-    return f"sub-{subject_id:02d}"
-
-def get_run_id(subj_id, condition, run_no):
-    """
-    Generates a run ID string based on the subject ID, condition, and run number.
-    Args:
-        subj_id (str): Subject ID in the format 'sub-XX' or as an integer.
-        condition (str): Experimental condition ('overt' or 'covert').
-        run_no (int): Run number in the format 'run-XX' or as an integer (range 1-3).
-    Returns:
-        str: Run ID string.
-    """
-    if isinstance(subj_id, int):
-        subj_id = f"sub-{subj_id:02d}"
-    else:
-        if not subj_id.startswith("sub-"):
-            raise ValueError(f"subj_id must be an integer or a string starting with 'sub-'. Got {subj_id}")
-    if condition not in ["overt", "covert"]:
-        raise ValueError(f"condition must be either 'overt' or 'covert'. Got {condition}")
-    if isinstance(run_no, int):
-        run_str = f"run-{run_no:02d}"
-    return f"{subj_id}_ses-01_task-{condition}_{run_str}"
-
 
 def make_montage(subset_channels=None, montage_name='standard_1020'):
 
@@ -55,29 +22,6 @@ def make_montage(subset_channels=None, montage_name='standard_1020'):
     subset_positions = {ch: subset_positions[ch] for ch in subset_channels}
 
     return make_dig_montage(ch_pos=subset_positions, coord_frame='head')
-
-def reset_mne_first_samp(cropped_raw):
-    """
-    Creates a new MNE Raw object from a cropped Raw object with first_samp set to 0.
-    
-    This function:
-    1. Extracts the data array.
-    2. Copies the info structure.
-    3. Shifts annotations so they align with the new t=0.
-    """
-
-    data = cropped_raw.get_data()
-    info = cropped_raw.info.copy()
-    
-    new_raw = RawArray(data, info)
-
-    if cropped_raw.annotations:
-        new_annots = cropped_raw.annotations.copy()
-        time_shift = cropped_raw.first_samp / cropped_raw.info['sfreq']
-        new_annots.onset -= time_shift
-        new_raw.set_annotations(new_annots)
-        
-    return new_raw
 
 def epoch_data(data, events, epoch, sfreq):
     """
