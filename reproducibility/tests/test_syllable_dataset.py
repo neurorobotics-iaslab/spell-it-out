@@ -9,6 +9,7 @@ import pytest
 
 from reproducibility.processing.syllable_dataset import (
     BuildPaths,
+    build_syllable_datasets,
     DatasetSpec,
     _ShardWriter,
     _bad_events_for_run,
@@ -64,11 +65,96 @@ def test_bad_overlap_uses_bad_prefix_and_half_open_intervals():
     assert not overlaps_bad(2.5, 3.0, intervals)
 
 
+def test_no_audio_override_does_not_mutate_config():
+    config = _config()
+    config["datasets"][0]["include_audio"] = True
+    resolved = resolve_config(config, no_audio=True)
+    assert not resolved["datasets"][0]["include_audio"]
+    assert not resolved["audio"]["extract_embeddings"]
+    assert config["datasets"][0]["include_audio"]
+    assert "extract_embeddings" not in config["audio"]
+
+
+@pytest.mark.parametrize("mode,no_audio", [("apply", False), ("apply", True), ("validate", False)])
+def test_production_embeddings_and_audio_bypass(tmp_path, monkeypatch, mode, no_audio):
+    from reproducibility.processing import syllable_dataset as module
+
+    config = _config()
+    config["datasets"] = [{
+        "name": "overt_production", "description_label": "overtproduction",
+        "task": "overt", "event_type": "syllabification_syllable",
+        "include_audio": True,
+    }, {
+        "name": "overt_cue", "description_label": "overtcue", "task": "overt",
+        "event_type": "syllabification_cue", "include_audio": False,
+    }]
+    config = resolve_config(config, no_audio=no_audio)
+    raw = mne.io.RawArray(np.zeros((1, 500)), mne.create_info(["C3"], 100, "eeg"), verbose="error")
+    events = pd.DataFrame({
+        "onset": [1., 2., 1., 2.], "duration": [.1, .2, .6, .6],
+        "trial_type": ["syllabification_syllable"] * 2 + ["syllabification_cue"] * 2,
+        "trial_index": [1] * 4, "token_index": [1, 2, 1, 2], "token": ["a"] * 4,
+    })
+    run = SimpleNamespace(
+        raw=raw, events=events, events_path=tmp_path / "events.tsv",
+        subject="01", subject_id="sub-01", session="01", task="overt", run="01",
+        bids_path=SimpleNamespace(fpath=tmp_path / "source.vhdr"),
+    )
+    monkeypatch.setattr(module, "SpellItOutDataset", lambda _: SimpleNamespace(
+        subjects=["01"], iter_runs=lambda **kwargs: iter([run]),
+    ))
+    calls = []
+    def locate(*args):
+        calls.append("locate")
+        return tmp_path / "audio.wav"
+    def read(*args, **kwargs):
+        calls.append("read")
+        return np.arange(5000, dtype=np.float32), 1000
+    def extract(waveform, sample_rate):
+        calls.append((len(waveform), sample_rate))
+        return np.full((len(waveform) // 100, 3), waveform[0], dtype=np.float32)
+    def factory():
+        calls.append("model")
+        return SimpleNamespace(extract_embedding=extract, model=SimpleNamespace(
+            config=SimpleNamespace(_name_or_path="test-checkpoint", _commit_hash="revision"),
+        ))
+    monkeypatch.setattr(module, "_source_audio_path", locate)
+    monkeypatch.setattr(module.sf, "info", lambda _: SimpleNamespace(samplerate=1000, frames=5000))
+    monkeypatch.setattr(module.sf, "read", read)
+    monkeypatch.setattr(module, "_create_embedding_extractor", factory)
+    categories = tmp_path / "categories.tsv"
+    categories.write_text("phonesyll\tVOWEL\na\t1\n", encoding="utf-8")
+    (tmp_path / "dataset_description.json").write_text('{"Name":"test"}', encoding="utf-8")
+    paths = BuildPaths(tmp_path, tmp_path, tmp_path, tmp_path / "output")
+    result = build_syllable_datasets(paths, config, categories, mode=mode)
+    assert result["counts"]["overt_production"]["accepted"] == 2
+    if no_audio:
+        assert calls == []
+    elif mode == "validate":
+        assert calls == ["locate"]
+        assert not paths.output_root.exists()
+    else:
+        assert calls == ["locate", "read", "model", (100, 1000), (200, 1000)]
+    if mode == "apply":
+        production = next(paths.output_root.rglob("*desc-overtproduction_dataset.h5"))
+        with h5py.File(production, "r") as handle:
+            assert handle["eeg/data"].shape[0] == 2
+            if no_audio:
+                assert "audio" not in handle and "audio_embeddings" not in handle
+            else:
+                assert handle["audio/offsets"][:].tolist() == [0, 100, 300]
+                assert handle["audio_embeddings/offsets"][:].tolist() == [0, 1, 3]
+                np.testing.assert_array_equal(handle["audio_embeddings/data"][:], [[1000]*3, [2000]*3, [2000]*3])
+                assert handle["audio_embeddings"].attrs["model"] == "test-checkpoint"
+        with h5py.File(next(paths.output_root.rglob("*desc-overtcue_dataset.h5")), "r") as handle:
+            assert "audio" not in handle and "audio_embeddings" not in handle
+
+
 def test_processing_overrides_preserve_original_config_and_resampling():
     config = _config()
     config["preprocessing"]["resample_sfreq"] = 512
     resolved = resolve_config(
-        config, source="raw", exclude_bad_overlap=True,
+        config, source="raw", exclude_bads=True,
         bad_annotation_source="auto", filter_phase="causal",
     )
     assert resolved["source"] == "raw"
@@ -77,7 +163,7 @@ def test_processing_overrides_preserve_original_config_and_resampling():
     assert resolved["preprocessing"]["filter_phase"] == "causal"
     assert resolved["preprocessing"]["resample_sfreq"] == 512
     assert "filter_phase" not in config["preprocessing"]
-    assert resolve_config(resolved, exclude_bad_overlap=False)["eeg"]["exclude_bad_overlap"] is False
+    assert resolve_config(resolved, exclude_bads=False)["eeg"]["exclude_bad_overlap"] is False
     with pytest.raises(ValueError, match="filter_phase"):
         resolve_config(config, filter_phase="invalid")
     with pytest.raises(ValueError, match="bad_annotation_source"):

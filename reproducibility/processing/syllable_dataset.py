@@ -107,12 +107,17 @@ def resolve_config(
     source: str | None = None,
     eeg_tmin: float | None = None,
     eeg_tmax: float | None = None,
-    exclude_bad_overlap: bool | None = None,
+    exclude_bads: bool | None = None,
     bad_annotation_source: str | None = None,
     filter_phase: str | None = None,
+    no_audio: bool = False,
 ) -> dict[str, Any]:
     """Return a deep copy with explicit CLI overrides applied."""
     resolved = json.loads(json.dumps(config))
+    if no_audio:
+        for item in resolved["datasets"]:
+            item["include_audio"] = False
+        resolved["audio"]["extract_embeddings"] = False
     if source is not None:
         if source not in {"raw", "preprocessed"}:
             raise ValueError("Source override must be 'raw' or 'preprocessed'.")
@@ -121,8 +126,8 @@ def resolve_config(
         resolved["eeg"]["tmin"] = float(eeg_tmin)
     if eeg_tmax is not None:
         resolved["eeg"]["tmax"] = float(eeg_tmax)
-    if exclude_bad_overlap is not None:
-        resolved["eeg"]["exclude_bad_overlap"] = exclude_bad_overlap
+    if exclude_bads is not None:
+        resolved["eeg"]["exclude_bad_overlap"] = exclude_bads
     if bad_annotation_source is not None:
         resolved["eeg"]["bad_annotation_source"] = bad_annotation_source
     if filter_phase is not None:
@@ -448,6 +453,7 @@ class _ShardWriter:
         )
         self.audio_data = self.audio_offsets = self.audio_sfreq = None
         self.audio_start = self.audio_stop = None
+        self.embedding_data = self.embedding_offsets = None
         if spec.include_audio:
             audio = self.file.create_group("audio")
             audio.attrs["units"] = "relative amplitude"
@@ -471,10 +477,42 @@ class _ShardWriter:
         records: list[dict[str, Any]],
         category_data: np.ndarray,
         audio_segments: list[tuple[np.ndarray, int, int, int]] | None,
+        embeddings: list[np.ndarray] | None = None,
+        embedding_metadata: dict[str, Any] | None = None,
     ) -> None:
         n = len(records)
         if n == 0:
             return
+        if embeddings is not None:
+            if audio_segments is None or len(embeddings) != n:
+                raise ValueError("Embeddings must match the audio samples in this batch.")
+            embeddings = [np.asarray(value, dtype=np.float32) for value in embeddings]
+            if any(value.ndim != 2 or min(value.shape) <= 0 or not np.isfinite(value).all() for value in embeddings):
+                raise ValueError("Embedding sequences must be finite, non-empty (frames, features) arrays.")
+            width = embeddings[0].shape[1]
+            if any(value.shape[1] != width for value in embeddings):
+                raise ValueError("Embedding feature dimensions differ within the batch.")
+            if self.embedding_data is None:
+                if self.count:
+                    raise ValueError("Embeddings must be supplied from the first batch.")
+                group = self.file.create_group("audio_embeddings")
+                group.attrs.update(embedding_metadata or {})
+                group.attrs["representation"] = "variable-length frame sequence; no temporal pooling"
+                h5 = json.loads(self.file.attrs["build_config_json"])["hdf5"]
+                compression = h5.get("compression", "gzip")
+                self.embedding_data = group.create_dataset(
+                    "data", shape=(0, width), maxshape=(None, width), dtype=np.float32,
+                    compression=compression,
+                    compression_opts=h5.get("compression_level", 4) if compression == "gzip" else None,
+                    shuffle=bool(h5.get("shuffle", True)),
+                )
+                self.embedding_offsets = group.create_dataset(
+                    "offsets", data=np.asarray([0], dtype=np.int64), maxshape=(None,),
+                )
+            elif self.embedding_data.shape[1] != width:
+                raise ValueError("Embedding feature dimension changed between batches.")
+        elif self.embedding_data is not None:
+            raise ValueError("Missing embedding batch for samples with audio embeddings.")
         old = self.count
         new = old + n
         self.eeg.resize(new, axis=0)
@@ -498,6 +536,13 @@ class _ShardWriter:
             for dataset, index in ((self.audio_sfreq, 1), (self.audio_start, 2), (self.audio_stop, 3)):
                 dataset.resize(new, axis=0)
                 dataset[old:new] = [segment[index] for segment in audio_segments]
+        if embeddings is not None:
+            flat = np.concatenate(embeddings, axis=0)
+            start = self.embedding_data.shape[0]
+            self.embedding_data.resize(start + len(flat), axis=0)
+            self.embedding_data[start:] = flat
+            self.embedding_offsets.resize(new + 1, axis=0)
+            self.embedding_offsets[old + 1:new + 1] = start + np.cumsum([len(value) for value in embeddings])
 
     def close(self, *, commit: bool) -> None:
         self.file.attrs["sample_count"] = self.count
@@ -625,6 +670,14 @@ def _write_metadata(paths: BuildPaths, config: dict[str, Any], digest: str) -> N
     )
 
 
+def _create_embedding_extractor():
+    # Keep optional torch/transformers dependencies and model downloads out of
+    # EEG-only builds and read-only validation.
+    from .embedding_extraction import EmbeddingExtractor
+
+    return EmbeddingExtractor()
+
+
 def build_syllable_datasets(
     paths: BuildPaths,
     config: dict[str, Any],
@@ -639,6 +692,7 @@ def build_syllable_datasets(
     if mode not in {"validate", "apply"}:
         raise ValueError("mode must be 'validate' or 'apply'.")
     config = json.loads(json.dumps(config))
+    config["audio"].setdefault("extract_embeddings", True)
     specs = dataset_specs(config)
     if selected_datasets is not None:
         wanted = set(selected_datasets)
@@ -678,6 +732,7 @@ def build_syllable_datasets(
     eeg_cfg = config["eeg"]
     tmin = float(eeg_cfg["tmin"])
     tmax = float(eeg_cfg["tmax"])
+    embedding_extractor = None
 
     for subject in chosen_subjects:
         writers: dict[str, _ShardWriter] = {}
@@ -708,6 +763,11 @@ def build_syllable_datasets(
                     channel_names = list(raw.ch_names)
                     recording_end = (raw.n_times - 1) / sfreq
                 offsets, times = _epoch_offsets(sfreq, tmin, tmax)
+                # Per-run constants, computed once instead of per sample.
+                source_eeg = _relative(Path(run.bids_path.fpath), paths.bids_root)
+                source_events = _relative(run.events_path, paths.bids_root)
+                raw_data = raw.get_data() if mode == "apply" else None
+                time_origin = float(raw.times[0])
 
                 audio_data = None
                 audio_sfreq = None
@@ -816,15 +876,20 @@ def build_syllable_datasets(
                     records = []
                     categories = []
                     audio_batch = [] if spec.include_audio else None
+                    embedding_batch = [] if (
+                        spec.include_audio and spec.task == "overt"
+                        and spec.event_type == "syllabification_syllable"
+                        and config["audio"].get("extract_embeddings", True)
+                    ) else None
+                    embedding_metadata = None
                     for row, trial, token_index, onset, duration in accepted_rows:
-                        center = raw.time_as_index(onset, use_rounding=True)[0]
+                        # Same rounding as raw.time_as_index(onset, use_rounding=True).
+                        center = int(np.round((onset - time_origin) * sfreq))
                         indices = center + offsets
-                        segment = raw.get_data(start=int(indices[0]), stop=int(indices[-1] + 1))
+                        segment = raw_data[:, int(indices[0]):int(indices[-1] + 1)]
                         segment = _apply_epoch_operations(segment, times, eeg_cfg)
                         token = str(row["token"]).strip()
                         sample_id = _sample_id(run, spec, trial, token_index)
-                        source_eeg = _relative(Path(run.bids_path.fpath), paths.bids_root)
-                        source_events = _relative(run.events_path, paths.bids_root)
                         record = {
                             "id": sample_id, "run": f"run-{run.run}", "syllable": token,
                             "trial_index": trial, "token_index": token_index,
@@ -850,12 +915,32 @@ def build_syllable_datasets(
                         manifest.append(manifest_row)
                         if audio_batch is not None:
                             assert audio_data is not None and audio_sfreq is not None
-                            audio_batch.append(_audio_segment(audio_data, audio_sfreq, onset, duration, config))
+                            audio_segment = _audio_segment(audio_data, audio_sfreq, onset, duration, config)
+                            audio_batch.append(audio_segment)
+                            if embedding_batch is not None:
+                                if embedding_extractor is None:
+                                    embedding_extractor = _create_embedding_extractor()
+                                try:
+                                    embedding_batch.append(embedding_extractor.extract_embedding(
+                                        audio_segment[0], audio_segment[1],
+                                    ))
+                                except Exception as error:
+                                    raise RuntimeError(f"Audio embedding extraction failed for {sample_id}: {error}") from error
+                                model = embedding_extractor.model
+                                embedding_metadata = {
+                                    "model": str(model.config._name_or_path),
+                                    "model_revision": str(getattr(model.config, "_commit_hash", None) or "unknown"),
+                                    "method": "EmbeddingExtractor.extract_embedding",
+                                    "hidden_state_index": 0,
+                                    "input_sampling_frequency": 16000,
+                                }
                     writer.append(
                         np.asarray(eeg_batch, dtype=eeg_cfg.get("dtype", "float32")),
                         records,
                         np.asarray(categories, dtype=np.uint8),
                         audio_batch,
+                        embedding_batch,
+                        embedding_metadata,
                     )
         except Exception:
             for writer in writers.values():

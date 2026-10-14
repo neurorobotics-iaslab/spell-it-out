@@ -59,6 +59,27 @@ data can be selected with `--source raw`), resampling to 512 Hz,
 and rejection of windows overlapping reviewed BAD_* spans. Standard resampling
 is unchanged and should not be described as causal.
 
+For `overtproduction`, stage 08 also calls `EmbeddingExtractor.extract_embedding`
+on each duration-matched audio segment. The optional `torch`, `torchaudio` and
+`transformers` dependencies and the extractor's Hugging Face checkpoint must be
+available for an audio-enabled build. Validation does not load the model.
+Embedding sequences are stored without temporal pooling as float32 arrays in
+`audio_embeddings/data` (frames × features), with `audio_embeddings/offsets`
+mapping each EEG sample to its frame interval, just like the audio offsets.
+Group attributes record the model, revision, extraction method and hidden-state
+index. The current extractor returns `hidden_states[0]`, not the penultimate
+transformer layer; its output is stored unchanged. These are derived audio
+representations, not a guarantee of voice anonymization.
+
+To build EEG/labels only, without reading WAVs or loading the embedding model:
+
+```powershell
+python -m reproducibility.scripts.08_build_syllable_datasets apply --no-audio
+```
+
+`--no-audio` omits both `audio` and `audio_embeddings` groups and skips audio
+availability/duration checks. Missing production annotations are still reported.
+
 Administrative preparation and migration scripts remain outside this directory.
 In particular, `prepare_data_V3.py` is not part of this paper pipeline copy.
 

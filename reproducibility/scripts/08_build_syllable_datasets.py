@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eeg-tmin", type=float, default=None)
     parser.add_argument("--eeg-tmax", type=float, default=None)
     parser.add_argument(
-        "--exclude-bad-overlap", action=argparse.BooleanOptionalAction, default=None,
+        "--exclude-bads", action=argparse.BooleanOptionalAction, default=None,
         help="Reject EEG windows overlapping BAD_* spans.",
     )
     parser.add_argument(
@@ -60,6 +60,10 @@ def parse_args() -> argparse.Namespace:
         help="Band-pass/notch mode: zero-phase FIR or forward-only Butterworth IIR. Resampling is unchanged.",
     )
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--no-audio", action="store_true",
+        help="Skip audio loading, audio segments and audio embeddings (EEG/labels only).",
+    )
     return parser.parse_args()
 
 
@@ -80,9 +84,10 @@ def main(args: argparse.Namespace) -> None:
     config = resolve_config(
         load_config(args.config), source=args.source,
         eeg_tmin=args.eeg_tmin, eeg_tmax=args.eeg_tmax,
-        exclude_bad_overlap=args.exclude_bad_overlap,
+        exclude_bads=args.exclude_bads,
         bad_annotation_source=args.bad_annotation_source,
         filter_phase=args.filter_phase,
+        no_audio=args.no_audio,
     )
     source_root = bids_root if config["source"] == "raw" else preprocessed_root
     paths = BuildPaths(

@@ -45,6 +45,7 @@
     "reference": null
   },
   "audio": {
+    "extract_embeddings": true,
     "sampling_frequency": "native",
     "channel_policy": "mono"
   },

@@ -356,7 +356,7 @@ The distributed default configuration first resamples to 512 Hz, then applies
 a 2–70 Hz band-pass filter and a 50 Hz notch filter before window extraction. Changing
 the JSON configuration produces a different recorded configuration digest.
 
-`--exclude-bad-overlap` / `--no-exclude-bad-overlap` overrides
+`--exclude-bads` / `--no-exclude-bads` overrides
 `eeg.exclude_bad_overlap` (enabled by default). With
 `eeg.bad_annotation_source="auto"`, raw EEG uses the corresponding published
 preprocessing events for reviewed `BAD_*` spans; preprocessed EEG uses its own

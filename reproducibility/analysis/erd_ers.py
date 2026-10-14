@@ -237,7 +237,7 @@ def write_subject_tfr_outputs(
     annotations.to_csv(paths["annotations"], sep="\t", index=False)
     source_paths = [input_paths] if isinstance(input_paths, Path) else list(input_paths)
     metadata = {
-        "schema_version": 3,
+        "schema_version": 1,
         "subject": subject,
         "condition": condition,
         "input_stage": config.input_stage,
