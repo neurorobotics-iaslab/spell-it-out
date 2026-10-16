@@ -5,7 +5,8 @@ Examples
 python -m reproducibility.scripts.08_build_syllable_datasets validate
 python -m reproducibility.scripts.08_build_syllable_datasets validate --subjects 01 --datasets overt_production
 python -m reproducibility.scripts.08_build_syllable_datasets apply
-python -m reproducibility.scripts.08_build_syllable_datasets apply --source raw --eeg-tmin -0.2 --eeg-tmax 0.8
+python -m reproducibility.scripts.08_build_syllable_datasets apply --source preprocessed --eeg-tmin -0.2 --eeg-tmax 0.8
+python -m reproducibility.scripts.08_build_syllable_datasets apply --audio --embeddings
 """
 
 from __future__ import annotations
@@ -61,8 +62,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
-        "--no-audio", action="store_true",
-        help="Skip audio loading, audio segments and audio embeddings (EEG/labels only).",
+        "--audio", action=argparse.BooleanOptionalAction, default=None,
+        help="Add duration-matched audio segments to datasets with include_audio "
+             "(default from config: off). --no-audio also disables embeddings.",
+    )
+    parser.add_argument(
+        "--embeddings", action=argparse.BooleanOptionalAction, default=None,
+        help="Add Wav2Vec2 audio embeddings to overt_production (requires --audio; "
+             "default from config: off).",
     )
     return parser.parse_args()
 
@@ -87,7 +94,7 @@ def main(args: argparse.Namespace) -> None:
         exclude_bads=args.exclude_bads,
         bad_annotation_source=args.bad_annotation_source,
         filter_phase=args.filter_phase,
-        no_audio=args.no_audio,
+        audio=args.audio, embeddings=args.embeddings,
     )
     source_root = bids_root if config["source"] == "raw" else preprocessed_root
     paths = BuildPaths(

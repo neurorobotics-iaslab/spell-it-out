@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source": "preprocessed",
+  "source": "raw",
   "datasets": [
     {
       "name": "covert_cue",
@@ -45,7 +45,8 @@
     "reference": null
   },
   "audio": {
-    "extract_embeddings": true,
+    "enabled": false,
+    "extract_embeddings": false,
     "sampling_frequency": "native",
     "channel_policy": "mono"
   },

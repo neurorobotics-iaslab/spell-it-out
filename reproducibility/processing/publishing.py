@@ -48,6 +48,49 @@ CHANNEL_PLAN_COLUMNS = (
     "interpolate_triggering_runs",
     "exclude_triggering_runs",
 )
+_PREPROCESSED_README = """\
+# Spell-IT-OUT preprocessed EEG
+
+Cleaned continuous EEG, one `desc-preproc` recording for each raw run. This is
+the data used for the analyses in the paper.
+
+## Processing
+
+1. Per run: AF7 and AF8 dropped (often poor quality); EEG and EOG resampled
+   to 512 Hz and band-pass filtered at 1–100 Hz (zero-phase FIR).
+2. Per run: blink candidates (from FP1, FP2, FPz and EOG) and muscle
+   candidates (from high-frequency activity) detected with MNE, plus PyPREP
+   channel-quality evidence. Everything was reviewed by hand.
+3. Per subject and task: channel decisions of the three runs merged, so every
+   run gets the same interpolations. 50 Hz notch filter, then average reference.
+4. Extended Infomax ICA fitted on the three runs concatenated, leaving out
+   `BAD_*` spans, with as many components as the data rank allows. Components
+   were labelled with ICLabel and decided with these rules, in order:
+   reject muscle/eye/heart/line noise with p ≥ 0.80; review channel noise with
+   p ≥ 0.70; keep brain with p ≥ 0.60; keep components explaining < 0.4 % of
+   the variance; review everything else by hand. The removed components are
+   listed in the `Description` of each `*_eeg.json`.
+5. The cleaned signal was split back into the original runs.
+
+Sampling rate, filters and reference of each file are in its `*_eeg.json`;
+interpolated channels are marked in `*_channels.tsv`.
+
+## Annotations
+
+Besides the experimental events, `*_events.tsv` contains the reviewed
+artifact annotations. They mark time spans; no samples were removed.
+
+- `BLINK`: reviewed blinks. Not treated as bad data.
+- `BAD_MUSCLE`, `BAD_AMPLITUDE`, `BAD_MOVEMENT`, `BAD_MANUAL`: spans to
+  exclude from analyses.
+
+## qc/
+
+The complete review record: artifact candidates and decisions, channel
+evidence and decisions, the channel plan used for ICA, component decisions and
+ICA fit metadata. These tables use a project-specific format and are listed in
+`.bidsignore`. See `qc/README`.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -586,20 +629,7 @@ def write_derivative_scaffold(
     description["SourceDatasets"] = [source_dataset]
     _write_json(output_root / "dataset_description.json", description)
 
-    (output_root / "README").write_text(
-        "Spell-IT-OUT preprocessed EEG\n"
-        "================================\n\n"
-        "This BIDS derivative contains the final continuous run-level EEG used "
-        "for analysis. Data were resampled and filtered, reviewed artifact spans "
-        "were annotated, reviewed channel decisions were harmonized within each "
-        "subject/task, selected channels were interpolated or excluded, EEG was "
-        "average-referenced, and reviewed condition-level Extended Infomax ICA "
-        "components were removed.\n\n"
-        "The qc/ directory contains the complete manual-review tables and exact "
-        "ICA provenance. It is intentionally excluded from BIDS schema validation "
-        "because these audit tables use a project-specific schema.\n",
-        encoding="utf-8",
-    )
+    (output_root / "README").write_text(_PREPROCESSED_README, encoding="utf-8")
     (output_root / "CHANGES").write_text(
         f"1.0.0 {date.today().isoformat()}\n"
         "- Initial publication export of reviewed preprocessed EEG.\n",
@@ -891,6 +921,35 @@ def _copy_qc(record: ExportRecord, output_root: Path) -> None:
         shutil.copy2(source, destination)
 
 
+_VHDR_CHANNEL = re.compile(r"^Ch(\d+)=([^,]*),[^,]*,([^,]*),(.*)$", re.MULTILINE)
+
+
+def write_vhdr_filter_settings(
+    vhdr: Path, highpass: float, lowpass: float, notch_hz: float | None,
+) -> None:
+    """Record the software filters in the BrainVision header.
+
+    pybv writes no filter information, so readers such as MNE would report the
+    data as unfiltered. MNE reads highpass/lowpass from the "Channels" table of
+    the [Comment] section (BrainVision Recorder layout), which is written here.
+    Re-running replaces a previously written table.
+    """
+    text = vhdr.read_text(encoding="utf-8")
+    head, marker, comment = text.partition("[Comment]")
+    if not marker:
+        raise ValueError(f"No [Comment] section in {vhdr}")
+    comment = comment.split("\nChannels\n", 1)[0].rstrip("\n")
+    notch = "Off" if notch_hz is None else f"{notch_hz:g}"
+    rows = [
+        "", "Channels", "--------",
+        "#  Name  Phys. Chn.  Resolution / Unit  Low Cutoff [Hz]  High Cutoff [Hz]  Notch [Hz]",
+    ] + [
+        f"{number}  {name}  {number}  {resolution} {unit}  {highpass:g}  {lowpass:g}  {notch}"
+        for number, name, resolution, unit in _VHDR_CHANNEL.findall(head)
+    ]
+    vhdr.write_text(head + marker + comment + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
+
+
 def export_run(
     inspection: RunInspection,
     raw_bids_root: Path,
@@ -915,6 +974,9 @@ def export_run(
         verbose="error",
     )
     del raw
+    write_vhdr_filter_settings(
+        vhdr, inspection.highpass, inspection.lowpass, inspection.line_frequency_hz,
+    )
 
     inspection.final_events.to_csv(
         output_dir / f"{stem}_events.tsv",

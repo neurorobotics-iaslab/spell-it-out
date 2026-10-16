@@ -65,14 +65,23 @@ def test_bad_overlap_uses_bad_prefix_and_half_open_intervals():
     assert not overlaps_bad(2.5, 3.0, intervals)
 
 
-def test_no_audio_override_does_not_mutate_config():
+def test_audio_is_opt_in_and_overrides_do_not_mutate_config():
     config = _config()
     config["datasets"][0]["include_audio"] = True
-    resolved = resolve_config(config, no_audio=True)
-    assert not resolved["datasets"][0]["include_audio"]
-    assert not resolved["audio"]["extract_embeddings"]
+    default = resolve_config(config)
+    assert not default["datasets"][0]["include_audio"]
+    assert default["audio"] == {"enabled": False, "extract_embeddings": False}
     assert config["datasets"][0]["include_audio"]
-    assert "extract_embeddings" not in config["audio"]
+    assert config["audio"] == {}
+
+    enabled = resolve_config(config, audio=True, embeddings=True)
+    assert enabled["datasets"][0]["include_audio"]
+    assert enabled["audio"]["extract_embeddings"]
+    disabled = resolve_config(enabled, audio=False)
+    assert not disabled["datasets"][0]["include_audio"]
+    assert not disabled["audio"]["extract_embeddings"]
+    with pytest.raises(ValueError, match="requires audio.enabled"):
+        resolve_config(config, embeddings=True)
 
 
 @pytest.mark.parametrize("mode,no_audio", [("apply", False), ("apply", True), ("validate", False)])
@@ -88,7 +97,7 @@ def test_production_embeddings_and_audio_bypass(tmp_path, monkeypatch, mode, no_
         "name": "overt_cue", "description_label": "overtcue", "task": "overt",
         "event_type": "syllabification_cue", "include_audio": False,
     }]
-    config = resolve_config(config, no_audio=no_audio)
+    config = resolve_config(config, audio=not no_audio, embeddings=not no_audio)
     raw = mne.io.RawArray(np.zeros((1, 500)), mne.create_info(["C3"], 100, "eeg"), verbose="error")
     events = pd.DataFrame({
         "onset": [1., 2., 1., 2.], "duration": [.1, .2, .6, .6],

@@ -99,6 +99,21 @@ def _validate_processing_options(config: dict[str, Any]) -> None:
         raise ValueError("eeg.exclude_bad_overlap must be a boolean.")
     if config["preprocessing"].get("filter_phase", "zero") not in {"zero", "causal"}:
         raise ValueError("preprocessing.filter_phase must be zero or causal.")
+    for key in ("enabled", "extract_embeddings"):
+        if not isinstance(config["audio"].get(key, False), bool):
+            raise ValueError(f"audio.{key} must be a boolean.")
+    if config["audio"].get("extract_embeddings", False) and not config["audio"].get("enabled", False):
+        raise ValueError("audio.extract_embeddings requires audio.enabled (--audio).")
+
+
+def _apply_audio_switch(config: dict[str, Any]) -> None:
+    """Make audio opt-in: datasets only include audio when audio.enabled is true."""
+    config["audio"].setdefault("enabled", False)
+    config["audio"].setdefault("extract_embeddings", False)
+    _validate_processing_options(config)
+    if not config["audio"]["enabled"]:
+        for item in config["datasets"]:
+            item["include_audio"] = False
 
 
 def resolve_config(
@@ -110,14 +125,17 @@ def resolve_config(
     exclude_bads: bool | None = None,
     bad_annotation_source: str | None = None,
     filter_phase: str | None = None,
-    no_audio: bool = False,
+    audio: bool | None = None,
+    embeddings: bool | None = None,
 ) -> dict[str, Any]:
     """Return a deep copy with explicit CLI overrides applied."""
     resolved = json.loads(json.dumps(config))
-    if no_audio:
-        for item in resolved["datasets"]:
-            item["include_audio"] = False
-        resolved["audio"]["extract_embeddings"] = False
+    if audio is False and embeddings is None:
+        embeddings = False  # Disabling audio also disables its embeddings.
+    if audio is not None:
+        resolved["audio"]["enabled"] = audio
+    if embeddings is not None:
+        resolved["audio"]["extract_embeddings"] = embeddings
     if source is not None:
         if source not in {"raw", "preprocessed"}:
             raise ValueError("Source override must be 'raw' or 'preprocessed'.")
@@ -132,7 +150,7 @@ def resolve_config(
         resolved["eeg"]["bad_annotation_source"] = bad_annotation_source
     if filter_phase is not None:
         resolved["preprocessing"]["filter_phase"] = filter_phase
-    _validate_processing_options(resolved)
+    _apply_audio_switch(resolved)
     if float(resolved["eeg"]["tmin"]) >= float(resolved["eeg"]["tmax"]):
         raise ValueError("The resolved EEG window has tmin >= tmax.")
     return resolved
@@ -650,7 +668,9 @@ def _write_metadata(paths: BuildPaths, config: dict[str, Any], digest: str) -> N
         "BuildConfigSHA256": digest,
         "Description": (
             "Fixed-window EEG segments aligned to syllable events, with phonetic "
-            "labels and duration-matched audio for overt production samples."
+            "labels"
+            + (" and duration-matched audio for overt production samples."
+               if any(item["include_audio"] for item in config["datasets"]) else ".")
         ),
     }
     (paths.output_root / "dataset_metadata.json").write_text(
@@ -659,15 +679,97 @@ def _write_metadata(paths: BuildPaths, config: dict[str, Any], digest: str) -> N
     (paths.output_root / "build_config.json").write_text(
         json.dumps(config, indent=2) + "\n", encoding="utf-8"
     )
-    (paths.output_root / "README.md").write_text(
-        "# Spell-IT-OUT syllable datasets\n\n"
-        "This directory is a **BIDS-derived, non-standard HDF5 analysis artifact**. "
-        "It is not an EEG datatype accepted by the BIDS Validator. Each shard stores "
-        "source BIDS entities, event times, the resolved build configuration, and its "
-        "SHA-256 digest. See `manifest.tsv` for sample-level provenance and "
-        "`exclusions.tsv` for omitted candidate samples.\n",
-        encoding="utf-8",
+    (paths.output_root / "README.md").write_text(syllable_readme(config), encoding="utf-8")
+
+
+def syllable_readme(config: dict[str, Any]) -> str:
+    """Describe the datasets built with a resolved configuration."""
+    eeg, prep = config["eeg"], config["preprocessing"]
+    has_audio = any(item["include_audio"] for item in config["datasets"])
+    has_embeddings = has_audio and config["audio"].get("extract_embeddings", False)
+
+    datasets = "\n".join(
+        f"| `{item['name']}` | {item['task']} | `{item['event_type']}` |"
+        + (" audio" if item["include_audio"] else "")
+        + (" + embeddings" if item["include_audio"] and has_embeddings else "")
+        + " |"
+        for item in config["datasets"]
     )
+    steps = []
+    if prep.get("resample_sfreq") is not None:
+        steps.append(f"resampled to {prep['resample_sfreq']:g} Hz")
+    filtered = prep.get("l_freq") is not None or prep.get("h_freq") is not None
+    if filtered:
+        steps.append(f"band-pass {prep.get('l_freq') or 0:g}–{prep.get('h_freq') or 'Nyquist'} Hz")
+    if prep.get("notch_freqs"):
+        filtered = True
+        steps.append("notch " + ", ".join(f"{value:g}" for value in prep["notch_freqs"]) + " Hz")
+    if filtered:
+        phase = "causal IIR" if prep.get("filter_phase") == "causal" else "zero-phase FIR"
+        steps[-1] += f" ({phase} filters)"
+    if prep.get("reference") is not None:
+        steps.append(f"reference: {prep['reference']}")
+    processing = "; ".join(steps) if steps else "none"
+    bads = (
+        "Windows overlapping a reviewed `BAD_*` span are left out."
+        if eeg.get("exclude_bad_overlap", True) else
+        "Windows overlapping `BAD_*` spans are kept."
+    )
+
+    audio_layout = ""
+    if has_audio:
+        audio_layout = (
+            "audio/data, audio/offsets      speech of the produced syllable (variable length);\n"
+            "                               sample i is data[offsets[i]:offsets[i+1]]\n"
+        )
+    if has_embeddings:
+        audio_layout += (
+            "audio_embeddings/data, offsets Wav2Vec2 frames (n_frames, 1024) per sample,\n"
+            "                               indexed like the audio; model in the group attributes\n"
+        )
+
+    return f"""\
+# Spell-IT-OUT syllable datasets
+
+EEG epochs around single syllables, ready for machine learning. There is one
+HDF5 file per subject and dataset. These files are derived from the BIDS data
+but are not a BIDS datatype.
+
+| Dataset | Task | Aligned to | Extra |
+|---|---|---|---|
+{datasets}
+
+## How they were built
+
+- EEG source: {config['source']} recordings
+- Window: {float(eeg['tmin']):g} to {float(eeg['tmax']):g} s around the event
+- Processing on the continuous signal: {processing}
+- {bads}
+
+The full configuration is in `build_config.json`; its SHA-256 is stored in
+every file.
+
+## File layout
+
+```
+eeg/data                       (n_samples, n_channels, n_times), {eeg.get('dtype', 'float32')}, {eeg.get('units', 'V')}
+eeg/times, eeg/channel_names
+labels/phonetic_categories     (n_samples, n_categories), 0/1
+labels/phonetic_category_names
+samples/syllable, samples/id, samples/run, samples/trial_index, ...
+{audio_layout}```
+
+```python
+import h5py
+
+with h5py.File("sub-01_ses-01_task-overt_desc-overtcue_dataset.h5") as f:
+    X = f["eeg/data"][:]
+    syllables = f["samples/syllable"].asstr()[:]
+```
+
+`manifest.tsv` lists every sample with its file and index; `exclusions.tsv`
+lists the candidate events that were left out and why.
+"""
 
 
 def _create_embedding_extractor():
@@ -692,7 +794,7 @@ def build_syllable_datasets(
     if mode not in {"validate", "apply"}:
         raise ValueError("mode must be 'validate' or 'apply'.")
     config = json.loads(json.dumps(config))
-    config["audio"].setdefault("extract_embeddings", True)
+    _apply_audio_switch(config)
     specs = dataset_specs(config)
     if selected_datasets is not None:
         wanted = set(selected_datasets)
@@ -879,7 +981,7 @@ def build_syllable_datasets(
                     embedding_batch = [] if (
                         spec.include_audio and spec.task == "overt"
                         and spec.event_type == "syllabification_syllable"
-                        and config["audio"].get("extract_embeddings", True)
+                        and config["audio"]["extract_embeddings"]
                     ) else None
                     embedding_metadata = None
                     for row, trial, token_index, onset, duration in accepted_rows:

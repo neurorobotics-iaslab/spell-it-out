@@ -6,10 +6,11 @@ reproducibility. Install Deno from https://deno.com/ or with conda-forge.
 
 Examples
 --------
-python scripts/00_validate_bids.py
-python scripts/00_validate_bids.py data/spellitout
-python scripts/00_validate_bids.py -- --verbose
-python scripts/00_validate_bids.py data/spellitout -- --verbose
+python -m reproducibility.scripts.00_validate_bids
+python -m reproducibility.scripts.00_validate_bids data/spellitout
+python -m reproducibility.scripts.00_validate_bids data/spellitout/derivatives/preprocessing
+python -m reproducibility.scripts.00_validate_bids -- --verbose
+python -m reproducibility.scripts.00_validate_bids data/spellitout -- --verbose
 """
 
 from __future__ import annotations

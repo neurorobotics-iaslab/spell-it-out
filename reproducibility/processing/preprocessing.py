@@ -150,10 +150,14 @@ def detect_qc_candidates(
         if config.blink_channels:
             channels = [channel for channel in config.blink_channels if channel in raw.ch_names]
         else:
+            # Default: frontal EEG channels plus every EOG channel.
             channels = [
                 channel
                 for channel in ("FP1", "FPZ", "FP2")
                 if channel in raw.ch_names
+            ] + [
+                raw.ch_names[index]
+                for index in mne.pick_types(raw.info, eeg=False, eog=True, exclude=[])
             ]
         if channels:
             if config.blink_l_freq_hz <= 0:

@@ -51,9 +51,7 @@ def test_validate_is_read_only_and_apply_is_lossless_and_idempotent(raw_dataset,
     assert plan.recordings == 3
     assert len(plan.writes) == 2
     assert {path: path.read_bytes() for path in original_files} == original_files
-    backup = apply_sidecar_plan(plan, backup_root=tmp_path / "backups")
-    assert (backup / "originals/channels.tsv").read_text() == CHANNELS
-    assert json.loads((backup / "journal.json").read_text())["state"] == "complete"
+    apply_sidecar_plan(plan)
     assert not (root / "channels.tsv").exists()
     assert not (root / "task-covert_eeg.json").exists()
     for recording in recordings:
@@ -112,12 +110,6 @@ def test_missing_metadata_and_concurrent_changes_fail_without_writes(raw_dataset
     (root / "task-covert_eeg.json").unlink()
     with pytest.raises(FileNotFoundError, match="EEG JSON"):
         plan_sidecar_migration(root)
-
-
-def test_backups_cannot_pollute_dataset(raw_dataset):
-    root, _ = raw_dataset
-    with pytest.raises(ValueError, match="outside"):
-        apply_sidecar_plan(plan_sidecar_migration(root), backup_root=root / "backup")
 
 
 def test_export_run_metadata_reads_migrated_raw_sidecars(raw_dataset):

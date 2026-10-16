@@ -36,7 +36,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--l-freq", type=float, default=1.0)
     parser.add_argument("--h-freq", type=float, default=100.0)
     parser.add_argument("--no-blink-annotations", action="store_true")
-    parser.add_argument("--blink-channels", nargs="*", default=())
+    parser.add_argument(
+        "--blink-channels", nargs="*", default=(),
+        help="Channels for blink detection. Default: FP1, FPZ, FP2 and all EOG channels.",
+    )
     parser.add_argument(
         "--blink-threshold-uv",
         "--blink-threshold",

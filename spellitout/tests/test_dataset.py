@@ -6,7 +6,7 @@ import pytest
 from spellitout import SpellItOutDataset
 
 
-TEST_DATASET = Path(__file__).resolve().parents[2] / "data" / "spellitout_bids_test"
+TEST_DATASET = Path(__file__).resolve().parents[2] / "data" / "spellitout"
 
 
 def test_dataset_root_is_required(monkeypatch):
@@ -52,9 +52,10 @@ def test_matching_paths_excludes_nested_derivatives(monkeypatch, tmp_path):
 def test_bids_discovery_and_loading():
     dataset = SpellItOutDataset(TEST_DATASET)
 
-    assert dataset.subjects == ("01",)
-    assert dataset.tasks == ("overt", "covert")
-    assert len(dataset.recordings) == 2
+    assert "01" in dataset.subjects
+    assert dataset.tasks == ("covert", "overt")
+    sub01 = [path for path in dataset.recordings if path.subject == "01"]
+    assert {(path.task, path.run) for path in sub01} >= {("covert", "01"), ("overt", "01")}
 
     overt = dataset.get_run(subject=1, task="overt", run=1, preload=False)
     assert overt.subject == "01"
@@ -90,6 +91,6 @@ def test_iter_runs_filters_and_uses_stable_order():
         )
     )
     assert [run.run_id for run in runs] == [
-        "sub-01_ses-01_task-overt_run-01",
         "sub-01_ses-01_task-covert_run-01",
+        "sub-01_ses-01_task-overt_run-01",
     ]

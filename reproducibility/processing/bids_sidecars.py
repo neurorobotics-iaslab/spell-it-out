@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-import hashlib
 import json
 from pathlib import Path
-import shutil
 import tempfile
 
 from mne_bids import get_bids_path_from_fname
@@ -159,35 +156,12 @@ def _atomic_write(path: Path, content: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def apply_sidecar_plan(plan: SidecarPlan, *, backup_root: Path | None = None) -> Path | None:
+def apply_sidecar_plan(plan: SidecarPlan) -> None:
     """Apply a preflighted plan; signal/event/coordinate files are never touched."""
     plan.check_unchanged()
     touched = set(plan.writes) | plan.removals
     for path in touched:
         path.resolve().relative_to(plan.root)
-    backup = None
-    journal = None
-    if backup_root is not None and touched:
-        backup_root = backup_root.resolve()
-        if backup_root == plan.root or plan.root in backup_root.parents:
-            raise ValueError("Backups must be outside the migrated dataset.")
-        backup = backup_root / (plan.root.name + "_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
-        backup.mkdir(parents=True, exist_ok=False)
-        for path in sorted(touched):
-            if plan.snapshots[path] is not None:
-                destination = backup / "originals" / path.relative_to(plan.root)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, destination)
-        journal = {
-            "dataset_root": str(plan.root), "state": "prepared",
-            "created": [str(path.relative_to(plan.root)) for path in sorted(plan.writes)
-                        if plan.snapshots[path] is None],
-            "writes": [str(path.relative_to(plan.root)) for path in sorted(plan.writes)],
-            "removals": [str(path.relative_to(plan.root)) for path in sorted(plan.removals)],
-            "original_sha256": {str(path.relative_to(plan.root)): hashlib.sha256(content).hexdigest()
-                                for path, content in plan.snapshots.items() if content is not None},
-        }
-        _atomic_write(backup / "journal.json", _json_text(journal).encode("utf-8"))
     try:
         for path, text in sorted(plan.writes.items()):
             _atomic_write(path, text.encode("utf-8"))
@@ -201,11 +175,4 @@ def apply_sidecar_plan(plan: SidecarPlan, *, backup_root: Path | None = None) ->
                 path.unlink(missing_ok=True)
             else:
                 _atomic_write(path, original)
-        if journal is not None:
-            journal["state"] = "rolled_back"
-            _atomic_write(backup / "journal.json", _json_text(journal).encode("utf-8"))
         raise
-    if journal is not None:
-        journal["state"] = "complete"
-        _atomic_write(backup / "journal.json", _json_text(journal).encode("utf-8"))
-    return backup
