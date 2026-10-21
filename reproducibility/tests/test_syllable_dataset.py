@@ -146,6 +146,7 @@ def test_production_embeddings_and_audio_bypass(tmp_path, monkeypatch, mode, no_
         assert calls == ["locate", "read", "model", (100, 1000), (200, 1000)]
     if mode == "apply":
         production = next(paths.output_root.rglob("*desc-overtproduction_dataset.h5"))
+        assert production.parent == paths.output_root / "overt_production"
         with h5py.File(production, "r") as handle:
             assert handle["eeg/data"].shape[0] == 2
             if no_audio:

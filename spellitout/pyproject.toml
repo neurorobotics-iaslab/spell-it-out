@@ -15,6 +15,9 @@ dependencies = [
   "mne-bids>=0.17",
 ]
 
+[project.optional-dependencies]
+download = ["openneuro-py>=2026.9"]
+
 [tool.setuptools]
 include-package-data = true
 

@@ -9,14 +9,35 @@ analyses live in [`reproducibility/`](../reproducibility/README.md), not here.
 Python ≥ 3.10. From the repository root:
 
 ```bash
-python -m pip install ./spellitout
+python -m pip install ./spellitout              # data access
+python -m pip install "./spellitout[download]"  # also downloading from OpenNeuro
 ```
+
+## Downloading the dataset
+
+`download_dataset()` fetches the data from
+[OpenNeuro ds008968](https://openneuro.org/datasets/ds008968) with
+`openneuro-py`, pinned to snapshot 1.0.0. Choose what you need: the whole
+dataset is about 71 GiB.
+
+```python
+from spellitout import download_dataset
+
+root = download_dataset()                                  # raw EEG, events, stimuli (50 GiB)
+root = download_dataset(parts=["syllable-datasets"])       # HDF5 epochs only (9 GiB)
+root = download_dataset(parts=["raw", "preprocessed"], subjects=[1, 2])
+```
+
+`parts` can combine `"raw"`, `"preprocessed"` (12 GiB) and
+`"syllable-datasets"`. Files already downloaded are skipped, so an interrupted
+download can simply be restarted.
 
 ## Opening the dataset
 
-Pass the folder that contains `dataset_description.json`, or set the
-`MNE_DATASETS_SPELLITOUT_DATA_PATH` environment variable and call
-`SpellItOutDataset()` with no arguments.
+Without arguments, `download_dataset()` and `SpellItOutDataset()` use the same
+folder: `MNE_DATASETS_SPELLITOUT_DATA_PATH` if set (as an environment variable
+or in the MNE configuration), otherwise `~/mne_data/spellitout`. You can also
+pass any folder that contains `dataset_description.json`.
 
 ```python
 from spellitout import SpellItOutDataset
@@ -54,7 +75,7 @@ or reading their paths is free.
 | `raw` | `mne.io.Raw` with the events as annotations; `preload=True` loads the samples too |
 | `events` | `events.tsv` as a DataFrame |
 | `bids_path`, `events_path` | file locations |
-| `audio_path`, `textgrid_path` | participant's speech and its alignment; `None` for covert runs |
+| `audio_path`, `textgrid_path` | participant's speech and its alignment, from `sourcedata/`; `None` when not available (the public release does not include them) |
 
 The event columns are described in the dataset README. One thing to know:
 `na` is a valid syllable, so if you read an `events.tsv` yourself with pandas,

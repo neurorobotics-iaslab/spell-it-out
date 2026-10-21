@@ -610,6 +610,11 @@ def write_derivative_scaffold(
                 "Description": "Automatic channel-quality evidence.",
             },
             {
+                "Name": "MNE-ICALabel",
+                "Version": _package_version("mne-icalabel"),
+                "Description": "ICA component classification used for automatic decisions.",
+            },
+            {
                 "Name": "Manual",
                 "Description": (
                     "Human review of artifact spans, channel decisions, and ICA "

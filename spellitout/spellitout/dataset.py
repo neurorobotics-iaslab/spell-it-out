@@ -5,15 +5,15 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 import json
-import os
 from pathlib import Path
 
 import mne
 from mne_bids import BIDSPath, find_matching_paths, read_raw_bids
 import pandas as pd
 
+from .download import DEFAULT_DATA_PATH_ENV, default_data_path
 
-DEFAULT_DATA_PATH_ENV = "MNE_DATASETS_SPELLITOUT_DATA_PATH"
+
 EEG_EXTENSIONS = (".vhdr", ".edf", ".bdf", ".set")
 REQUIRED_EVENT_COLUMNS = ("onset", "duration", "trial_type")
 
@@ -151,12 +151,13 @@ class SpellItOutDataset:
 
     def __init__(self, root: str | Path | None = None):
         if root is None:
-            root = os.environ.get(DEFAULT_DATA_PATH_ENV)
-        if root is None:
-            raise ValueError(
-                "Dataset root not provided and "
-                f"{DEFAULT_DATA_PATH_ENV} is not set."
-            )
+            root = default_data_path()
+            if not root.is_dir():
+                raise FileNotFoundError(
+                    f"Dataset root not provided and no dataset found at {root}. "
+                    f"Pass the root, set {DEFAULT_DATA_PATH_ENV}, or download it "
+                    "with spellitout.download_dataset()."
+                )
         self.root = Path(root).expanduser().resolve()
         if not self.root.is_dir():
             raise FileNotFoundError(f"BIDS dataset root not found: {self.root}")

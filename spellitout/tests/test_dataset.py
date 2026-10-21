@@ -9,10 +9,21 @@ from spellitout import SpellItOutDataset
 TEST_DATASET = Path(__file__).resolve().parents[2] / "data" / "spellitout"
 
 
-def test_dataset_root_is_required(monkeypatch):
+def test_dataset_root_is_required(monkeypatch, tmp_path):
     monkeypatch.delenv("MNE_DATASETS_SPELLITOUT_DATA_PATH", raising=False)
-    with pytest.raises(ValueError, match="Dataset root not provided"):
+    monkeypatch.setattr("mne.get_config", lambda key, *args, **kwargs: None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    with pytest.raises(FileNotFoundError, match="download_dataset"):
         SpellItOutDataset()
+
+
+def test_default_root_is_mne_data(monkeypatch, tmp_path):
+    monkeypatch.setattr("mne.get_config", lambda key, *args, **kwargs: None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    root = tmp_path / "mne_data" / "spellitout"
+    root.mkdir(parents=True)
+    (root / "dataset_description.json").write_text('{"Name": "t", "BIDSVersion": "1.11.1"}')
+    assert SpellItOutDataset().root == root.resolve()
 
 
 def test_non_bids_directory_is_rejected(tmp_path):
@@ -68,8 +79,12 @@ def test_bids_discovery_and_loading():
     assert not overt.raw.preload
     assert {"onset", "duration", "trial_type"}.issubset(overt.events.columns)
     assert len(overt.raw.annotations) == len(overt.events)
-    assert overt.audio_path is not None and overt.audio_path.is_file()
-    assert overt.textgrid_path is not None and overt.textgrid_path.is_file()
+    # Speech recordings live in sourcedata/, which the public release omits.
+    if (TEST_DATASET / "sourcedata").is_dir():
+        assert overt.audio_path is not None and overt.audio_path.is_file()
+        assert overt.textgrid_path is not None and overt.textgrid_path.is_file()
+    else:
+        assert overt.audio_path is None and overt.textgrid_path is None
 
     covert = dataset.get_run(subject="sub-01", task="covert", run="run-01")
     assert covert.audio_path is None
@@ -94,3 +109,13 @@ def test_iter_runs_filters_and_uses_stable_order():
         "sub-01_ses-01_task-covert_run-01",
         "sub-01_ses-01_task-overt_run-01",
     ]
+
+
+def test_missing_source_audio_gives_none(tmp_path):
+    from mne_bids import BIDSPath
+
+    (tmp_path / "dataset_description.json").write_text('{"Name": "t", "BIDSVersion": "1.11.1"}')
+    dataset = SpellItOutDataset(tmp_path)
+    path = BIDSPath(root=tmp_path, subject="01", session="01", task="overt", run="01",
+                    datatype="eeg", suffix="eeg", extension=".vhdr")
+    assert dataset._source_paths(path) == (None, None)

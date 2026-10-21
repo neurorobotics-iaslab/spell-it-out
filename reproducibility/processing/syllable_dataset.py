@@ -616,7 +616,7 @@ def _package_version(distribution: str, fallback: str = "unknown") -> str:
         return fallback
 
 
-def write_syllable_dataset_description(paths: BuildPaths) -> Path:
+def write_syllable_dataset_description(paths: BuildPaths, *, audio: bool = False) -> Path:
     """Write the BIDS derivative dataset description for HDF5 syllable data."""
     source_path = paths.bids_root / "dataset_description.json"
     source = json.loads(source_path.read_text(encoding="utf-8"))
@@ -635,8 +635,9 @@ def write_syllable_dataset_description(paths: BuildPaths) -> Path:
                 "Name": "spellitout.syllable_dataset",
                 "Version": _package_version("spellitout", "0.1.0"),
                 "Description": (
-                    "Construction of fixed-window EEG syllable segments and "
-                    "duration-matched overt-speech audio segments in HDF5."
+                    "Construction of fixed-window EEG syllable segments"
+                    + (" and duration-matched overt-speech audio segments" if audio else "")
+                    + " in HDF5."
                 ),
             }
         ],
@@ -658,7 +659,9 @@ def write_syllable_dataset_description(paths: BuildPaths) -> Path:
 
 
 def _write_metadata(paths: BuildPaths, config: dict[str, Any], digest: str) -> None:
-    write_syllable_dataset_description(paths)
+    write_syllable_dataset_description(
+        paths, audio=any(item["include_audio"] for item in config["datasets"]),
+    )
     metadata = {
         "Name": "Spell-IT-OUT syllable-segment datasets",
         "Format": "BIDS-derived HDF5 (non-standard analysis artifact)",
@@ -731,9 +734,10 @@ def syllable_readme(config: dict[str, Any]) -> str:
     return f"""\
 # Spell-IT-OUT syllable datasets
 
-EEG epochs around single syllables, ready for machine learning. There is one
-HDF5 file per subject and dataset. These files are derived from the BIDS data
-but are not a BIDS datatype.
+EEG epochs around single syllables, ready for machine learning. Each dataset
+has its own folder with one HDF5 file per subject, so `<dataset>/*.h5` is the
+whole dataset. These files are derived from the BIDS data but are not a BIDS
+datatype.
 
 | Dataset | Task | Aligned to | Extra |
 |---|---|---|---|
@@ -762,7 +766,7 @@ samples/syllable, samples/id, samples/run, samples/trial_index, ...
 ```python
 import h5py
 
-with h5py.File("sub-01_ses-01_task-overt_desc-overtcue_dataset.h5") as f:
+with h5py.File("overt_cue/sub-01_ses-01_task-overt_desc-overtcue_dataset.h5") as f:
     X = f["eeg/data"][:]
     syllables = f["samples/syllable"].asstr()[:]
 ```
@@ -960,7 +964,7 @@ def build_syllable_datasets(
                             f"sub-{subject}_ses-{session}_task-{spec.task}_"
                             f"desc-{spec.description_label}_dataset.h5"
                         )
-                        output = paths.output_root / f"sub-{subject}" / f"ses-{session}" / "eeg" / filename
+                        output = paths.output_root / spec.name / filename
                         if output.exists() and not overwrite:
                             raise FileExistsError(f"Output already exists: {output}")
                         writers[spec.name] = _ShardWriter(

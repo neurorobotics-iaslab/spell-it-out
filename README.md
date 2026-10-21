@@ -4,12 +4,14 @@ Code for **Spell-IT-OUT**, an EEG dataset of overt and covert (imagined)
 production of Italian sentences, syllable by syllable. 25 participants
 listened to 20 sentences, repeated them, and then produced them one syllable
 at a time at a fixed pace, three times aloud and three times in their mind.
-The dataset contains raw and preprocessed EEG, the overt speech with
-hand-corrected word and syllable alignment, and ready-to-use syllable epochs
-for machine learning.
+The dataset contains raw and preprocessed EEG, hand-corrected word and
+syllable timing of the overt speech, and ready-to-use syllable epochs for
+machine learning.
 
-**Data:** TODO OpenNeuro link. The dataset README there describes the protocol,
-the files and the events in detail.
+**Data:** [OpenNeuro ds008968](https://openneuro.org/datasets/ds008968),
+doi:[10.18112/openneuro.ds008968.v1.0.0](https://doi.org/10.18112/openneuro.ds008968.v1.0.0).
+The dataset README there describes the protocol, the files and the events in
+detail. The participants' voice recordings are not part of the public release.
 
 ## What is in this repository
 
@@ -23,7 +25,7 @@ the files and the events in detail.
 Python ≥ 3.10. From the repository root:
 
 ```bash
-python -m pip install ./spellitout                        # data access only
+python -m pip install "./spellitout[download]"            # data access and download
 python -m pip install -r reproducibility/requirements.txt # pipeline and paper analyses
 ```
 
@@ -35,14 +37,14 @@ build depends on your OS and GPU: install it following
 ## Quick start
 
 ```python
-from spellitout import SpellItOutDataset
+from spellitout import SpellItOutDataset, download_dataset
 
-dataset = SpellItOutDataset("path/to/spellitout")
+download_dataset(subjects=[1])   # raw data of subject 1 into ~/mne_data/spellitout
+dataset = SpellItOutDataset()
 run = dataset.get_run(subject=1, task="overt", run=1)
 
 run.raw          # mne.io.Raw, loaded on first access
 run.events       # pandas DataFrame from events.tsv
-run.audio_path   # participant's speech (overt runs only)
 ```
 
 The same class opens the preprocessed derivative:
@@ -54,10 +56,15 @@ The code is released under the [MIT license](LICENSE); the dataset under CC0.
 
 ## Citation
 
-If you use the dataset or the code, please cite:
+If you use the dataset or the code, please cite the paper:
 
-Cortecchia, T., Tortora, S., Tonin, L. *Spell-It-Out, a speech EEG dataset for
-overt and covert production of Italian syllables.* TODO: journal and DOI.
+Cortecchia, T., Tortora, S., Kiesner, J., Menegatti, E., Tonin, L. *Spell-It-Out, a speech EEG dataset for
+overt and covert production of Italian syllables.* (in preparation)
+
+and the dataset:
+
+Cortecchia, T., Tortora, S., Kiesner, J., Menegatti, E., Tonin, L. *Spell-IT-Out* (version 1.0.0).
+OpenNeuro. doi:[10.18112/openneuro.ds008968.v1.0.0](https://doi.org/10.18112/openneuro.ds008968.v1.0.0)
 
 This publication is part of the project PNRR-NGEU which has received funding
 from the MUR – DM 118/2023.

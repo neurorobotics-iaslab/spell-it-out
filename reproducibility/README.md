@@ -180,7 +180,8 @@ Defaults, from
 The configuration can also add rereferencing, detrending or baseline
 correction to each epoch.
 
-Audio is opt-in. `--audio` adds the speech segment of each `overt_production`
+Audio is opt-in and needs the participants' speech recordings in
+`sourcedata/`, which are not part of the public release. `--audio` adds the speech segment of each `overt_production`
 sample, cut to the annotated syllable duration. `--embeddings` (requires
 `--audio`) also stores Wav2Vec2 embeddings of each segment. These come from
 `facebook/wav2vec2-large-xlsr-53-italian` at a pinned revision, taken from

@@ -15,5 +15,7 @@ def test_package_imports_and_includes_resources():
 def test_core_exports_only_dataset_access():
     import spellitout
 
-    assert set(spellitout.__all__) == {"RunData", "SpellItOutDataset"}
+    assert set(spellitout.__all__) == {
+        "RunData", "SpellItOutDataset", "default_data_path", "download_dataset",
+    }
     assert not hasattr(spellitout, "build_syllable_datasets")
