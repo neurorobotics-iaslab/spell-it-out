@@ -1,5 +1,7 @@
 # Spell-IT-OUT
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23536164.svg)](https://doi.org/10.5281/zenodo.23536164)
+
 Code for **Spell-IT-OUT**, an EEG dataset of overt and covert (imagined)
 production of Italian sentences, syllable by syllable. 25 participants
 listened to 20 sentences, repeated them, and then produced them one syllable
@@ -12,6 +14,10 @@ machine learning.
 doi:[10.18112/openneuro.ds008968.v1.0.0](https://doi.org/10.18112/openneuro.ds008968.v1.0.0).
 The dataset README there describes the protocol, the files and the events in
 detail. The participants' voice recordings are not part of the public release.
+
+**Code:** archived on Zenodo, doi:[10.5281/zenodo.23536164](https://doi.org/10.5281/zenodo.23536164)
+(all versions); v0.1.0, the version used in the paper, is
+doi:[10.5281/zenodo.23536165](https://doi.org/10.5281/zenodo.23536165).
 
 ## What is in this repository
 
@@ -65,6 +71,11 @@ and the dataset:
 
 Cortecchia, T., Tortora, S., Kiesner, J., Menegatti, E., Tonin, L. *Spell-IT-Out* (version 1.0.0).
 OpenNeuro. doi:[10.18112/openneuro.ds008968.v1.0.0](https://doi.org/10.18112/openneuro.ds008968.v1.0.0)
+
+and, if you use the code, the release you used, e.g.:
+
+Cortecchia, T., Tortora, S., Kiesner, J., Menegatti, E., Tonin, L. *Spell-IT-Out: data access and
+reproducibility code* (v0.1.0). Zenodo. doi:[10.5281/zenodo.23536165](https://doi.org/10.5281/zenodo.23536165)
 
 This publication is part of the project PNRR-NGEU which has received funding
 from the MUR – DM 118/2023.

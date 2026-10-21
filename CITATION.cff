@@ -3,6 +3,14 @@ message: "If you use this code or the Spell-IT-Out dataset, please cite them as 
 type: software
 title: "Spell-IT-Out: data access and reproducibility code"
 version: 0.1.0
+doi: 10.5281/zenodo.23536165
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23536165
+    description: "This version (v0.1.0)"
+  - type: doi
+    value: 10.5281/zenodo.23536164
+    description: "All versions (concept DOI)"
 license: MIT
 repository-code: "https://github.com/neurorobotics-iaslab/spell-it-out"
 authors:
