@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use this code or the Spell-IT-Out dataset, please cite them as below."
+message: "If you use this code, please cite it together with the Spell-IT-Out dataset (OpenNeuro ds008968, doi:10.18112/openneuro.ds008968.v1.0.0)."
 type: software
 title: "Spell-IT-Out: data access and reproducibility code"
 version: 0.1.0
