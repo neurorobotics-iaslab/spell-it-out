@@ -17,7 +17,7 @@ python -m pip install "./spellitout[download]"  # also downloading from OpenNeur
 
 `download_dataset()` fetches the data from
 [OpenNeuro ds008968](https://openneuro.org/datasets/ds008968) with
-`openneuro-py`, pinned to snapshot 1.0.0. Choose what you need: the whole
+`openneuro-py`, pinned to snapshot 1.1.0. Choose what you need: the whole
 dataset is about 71 GiB.
 
 ```python

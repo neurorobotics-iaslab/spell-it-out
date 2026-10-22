@@ -584,7 +584,7 @@ def write_derivative_scaffold(
     source = _json(raw_bids_root / "dataset_description.json")
     generated = {
         "Name": DERIVATIVE_NAME,
-        "Version": pipeline_version or _package_version("spellitout", "0.1.0"),
+        "Version": pipeline_version or _package_version("spellitout", "0.1.1"),
         "Description": (
             "Spell-IT-OUT EEG preprocessing with reviewed artifact and channel "
             "quality control and condition-level Extended Infomax ICA."

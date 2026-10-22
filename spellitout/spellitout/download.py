@@ -10,7 +10,7 @@ import mne
 
 DEFAULT_DATA_PATH_ENV = "MNE_DATASETS_SPELLITOUT_DATA_PATH"
 OPENNEURO_DATASET = "ds008968"
-DEFAULT_VERSION = "1.0.0"
+DEFAULT_VERSION = "1.1.0"
 PARTS = ("raw", "preprocessed", "syllable-datasets")
 N_SUBJECTS = 25
 

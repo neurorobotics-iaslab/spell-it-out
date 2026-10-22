@@ -633,7 +633,7 @@ def write_syllable_dataset_description(paths: BuildPaths, *, audio: bool = False
         "GeneratedBy": [
             {
                 "Name": "spellitout.syllable_dataset",
-                "Version": _package_version("spellitout", "0.1.0"),
+                "Version": _package_version("spellitout", "0.1.1"),
                 "Description": (
                     "Construction of fixed-window EEG syllable segments"
                     + (" and duration-matched overt-speech audio segments" if audio else "")

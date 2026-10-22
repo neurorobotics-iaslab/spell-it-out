@@ -11,13 +11,13 @@ syllable timing of the overt speech, and ready-to-use syllable epochs for
 machine learning.
 
 **Data:** [OpenNeuro ds008968](https://openneuro.org/datasets/ds008968),
-doi:[10.18112/openneuro.ds008968.v1.0.0](https://doi.org/10.18112/openneuro.ds008968.v1.0.0).
+doi:[10.18112/openneuro.ds008968.v1.1.0](https://doi.org/10.18112/openneuro.ds008968.v1.1.0).
 The dataset README there describes the protocol, the files and the events in
 detail. The participants' voice recordings are not part of the public release.
 
 **Code:** archived on Zenodo, doi:[10.5281/zenodo.23536164](https://doi.org/10.5281/zenodo.23536164)
-(all versions); v0.1.0, the version used in the paper, is
-doi:[10.5281/zenodo.23536165](https://doi.org/10.5281/zenodo.23536165).
+(all versions). Each release has its own DOI, listed on the Zenodo page; the
+version used in the paper is v0.1.1.
 
 ## What is in this repository
 
@@ -69,13 +69,15 @@ overt and covert production of Italian syllables.* (in preparation)
 
 and the dataset:
 
-Cortecchia, T., Tortora, S., Kiesner, J., Menegatti, E., Tonin, L. *Spell-IT-Out* (version 1.0.0).
-OpenNeuro. doi:[10.18112/openneuro.ds008968.v1.0.0](https://doi.org/10.18112/openneuro.ds008968.v1.0.0)
+Cortecchia, T., Tortora, S., Kiesner, J., Menegatti, E., Tonin, L. *Spell-IT-Out* (version 1.1.0).
+OpenNeuro. doi:[10.18112/openneuro.ds008968.v1.1.0](https://doi.org/10.18112/openneuro.ds008968.v1.1.0)
 
 and, if you use the code, the release you used, e.g.:
 
 Cortecchia, T., Tortora, S., Kiesner, J., Menegatti, E., Tonin, L. *Spell-IT-Out: data access and
-reproducibility code* (v0.1.0). Zenodo. doi:[10.5281/zenodo.23536165](https://doi.org/10.5281/zenodo.23536165)
+reproducibility code* (v0.1.1). Zenodo. doi:[10.5281/zenodo.23536164](https://doi.org/10.5281/zenodo.23536164)
+(concept DOI; the DOI of each release is on the Zenodo page)
 
 This publication is part of the project PNRR-NGEU which has received funding
 from the MUR – DM 118/2023.
+
